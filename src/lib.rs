@@ -125,3 +125,19 @@ impl Default for Config {
         }
     }
 }
+
+impl Config {
+    /// Internal, used between crates `readme-code-extractor-core` and `readme-code-extractor` to
+    /// assure that they're of the same version.
+    #[doc(hidden)]
+    pub const fn is_exact_version(expected_version: &'static str) -> bool {
+        matches!(expected_version.as_bytes(), b"0.1.0")
+    }
+}
+
+#[doc(hidden)]
+const _ASSERT_VERSION: () = {
+    if !Config::is_exact_version(env!("CARGO_PKG_VERSION")) {
+        panic!("prudent-rs/readme-code-extractor-core is of different version than expected.");
+    }
+};
