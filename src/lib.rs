@@ -83,16 +83,22 @@ mod string_literal_content {
 pub use string_literal_content::string_literal_content;
 
 /// Restriction: We support only config (toml) files that
+/// - are in UTF-8 (the config content is in UTF-8).
 /// - have paths
 ///   - specified as ordinary string literals `"..."`.
 ///     - whose characters/content (content of the path) don't include a quote '"' and some other
 ///       special character, including backslashes! (Its representation in an ordinary, non-raw Rust
-///       string literal "...." (excluding the enclosing quotes) must be the same as it gets printed
-///       (in common terminals/screens).)
+///       string literal "...." (excluding the enclosing quotes). It must be the same as it gets
+///       printed in common terminals.)
 ///   - or: raw strings - TODO
 ///      - RAW strings ARE GOOD - NO ESCAPING!
 ///      - Good for backslashes and paths on Windows.
-/// - are in UTF-8 (the config content).
+///      - Good for multiline: No need to add a trailing backslash on each line (other than the last
+///        line).
+///      - BAD for multiline: The leading indentation is NOT removed. So, you want the content to
+///        start on a new line! But, such macros are likely to be used at their file's top level
+///        (rather than in a module or a function), so the raw string's actual content starting on a
+///        new line at column 0 should look OK.
 ///
 /// Return content of the config (toml) file.
 pub fn load_config_toml_file(config_toml_file_relative_path: &Literal) -> String {
