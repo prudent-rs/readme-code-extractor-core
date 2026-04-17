@@ -28,6 +28,14 @@ mod string_literal_content {
         }
     }
 
+    /// Return string content stored in literal. Literal can be
+    /// - within quotes "...", or
+    /// - a raw string literal `r"...", r#"..."#, r##"..."` (and so on).
+    ///
+    /// If it's within quotes "...", it must NOT contain any escaping (backslash). The only allowed
+    /// backslash occurrences are at line ends of multiline literals, but then the new line must be
+    /// as on Unix/Mac OS: only the new line character `\n`, and NOT the Windows/DOS pair of
+    /// carriage return `\r` and new line `\n`.`
     pub fn string_literal_content(literal: &Literal) -> impl AsRef<str> {
         // Initially it's enclosed by "...", r"...", r#"..."# etc.
         let enclosed = literal.to_string();
@@ -46,34 +54,94 @@ mod string_literal_content {
             .next()
             .unwrap_or_else(|| panic!("Can't parse the first character of: {enclosed}"));
 
-        let (start_incl, end_excl) = if first == '"' {
-            // ordinary "string literals"
-            let last = chars
-                .next_back()
-                .unwrap_or_else(|| panic!("Can't parse the last character of: {enclosed}"));
-            assert_eq!(
-                last, '"',
-                "Expecting the last character to be a closing quote '\"', but it's: '{last}'."
-            );
-            for c in chars {
-                if c == '\\' {
-                    panic!(
-                        "When passing in an ordinary enclosed string literal \"...\", do not use \
-                            any escaping (backslash). To pass in special characters, use an \
-                            (unescaped) raw string literal like r\"...\", r#\"...\"#..., r##\"...\"## \
-                            (and so on)."
-                    )
-                }
-            }
-            (1, enclosed.len() - 2)
-        } else if first == 'r' {
-            // raw string literals
+        let (start_incl, end_excl) = if first == '"' || first == 'r' {
+            if first == '"' {
+                // ordinary "string literals"
+                let last = chars
+                    .next_back()
+                    .unwrap_or_else(|| panic!("Can't parse the last character of: {enclosed}"));
 
-            todo!()
+                assert_eq!(
+                    last, '"',
+                    "Expecting the last character to be a closing quote '\"', but it's: '{last}'."
+                );
+                while let Some(c) = chars.next() {
+                    if c == '\\' {
+                        if let Some(c) = chars.next() {
+                            if c == '\n' {
+                                continue;
+                            }
+                        }
+                        panic!(
+                            "When passing in an ordinary enclosed string literal \"...\", do not \
+                             use any escaping (backslash character `\\`). \
+                             \
+                             The only exception is escaping a new line character \
+                             '\\n' like on Unix/Mac OS - BUT do NOT use the Windows/DOS pair of \
+                             carriage return `\r` and new line `\n`.\
+                             \
+                             To pass in special characters, use an (unescaped) raw string literal \
+                             like r\"...\", r#\"...\"#..., r##\"...\"## (and so on)."
+                        )
+                    }
+                }
+                (1, enclosed.len() - 2)
+            } else {
+                // raw string literals
+                let mut num_of_hashes = 0usize;
+                while let Some(c) = chars.next() {
+                    if c == '#' {
+                        num_of_hashes += 1;
+                        continue;
+                    } else if c == '"' {
+                        break;
+                    } else {
+                        panic!(
+                            "Expecting a raw string literal, but surprised by '{c}'. \
+                                Whole literal: {enclosed}"
+                        );
+                    }
+                }
+                for _ in [0..num_of_hashes] {
+                    if let Some(c) = chars.next_back() {
+                        if c == '#' {
+                            continue;
+                        } else {
+                            panic!(
+                                "Expecting a raw string literal, but it seems not closed. \
+                                Surprised by character '{c}' near the end. \
+                                Whole literal: {enclosed}"
+                            );
+                        }
+                    } else {
+                        panic!(
+                            "Expecting a raw string literal, but it seems not closed. \
+                                Expecting a hash character '#' near the end, but out of \
+                                characters. Whole literal: {enclosed}"
+                        );
+                    }
+                }
+                if let Some(c) = chars.next_back() {
+                    if c != '"' {
+                        panic!(
+                            "Expecting a raw string literal, but it seems not closed. \
+                                Expecting a quote character '\"' near the end, but received \
+                                '{c}' character instead. Whole literal: {enclosed}"
+                        );
+                    }
+                } else {
+                    panic!(
+                        "Expecting a raw string literal, but it seems not closed. \
+                            Expecting a quote character '\"' near the end, but out of \
+                            characters. Whole literal: {enclosed}"
+                    );
+                }
+                (2 + num_of_hashes, enclosed.len() - 1 - num_of_hashes)
+            }
         } else {
             panic!(
-                r###"Expecting a string literal, which would be either \"...\", or r\"...\",
-                        r#\"...\"#, r##"..."## (and so on). But received: {enclosed}"###
+                "Expecting a string literal, which would be either \"...\", or r\"...\", \
+                        r#\"...\"#, r##\"...\"## (and so on). But received: {enclosed}"
             )
         };
 
