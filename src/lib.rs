@@ -3,7 +3,7 @@
 extern crate alloc;
 use alloc::string::String;
 //use core::str::FromStr;
-use proc_macro2::Literal;
+use proc_macro2::{Literal, Span};
 
 mod string_literal_content {
     use proc_macro2::Literal;
@@ -294,9 +294,15 @@ pub mod traits {
         fn ordinary_code_suffix(&self) -> &str;
     }
 
-    pub trait ConfigAndSpan: crate::misc::SealedTrait {
+    pub trait Loaded {
+        fn source_file_content(&self) -> &str;
         fn config(&self) -> &dyn Config;
         fn span(&self) -> &Span;
+    }
+
+    pub trait Extracted {
+        fn preamble(&self) -> Option<&str>;
+        fn code_blocks(&self) -> &[&str];
     }
 }
 
@@ -310,7 +316,6 @@ pub mod traits {
 /// fails with a compile error if used outside of docs.rs.
 pub mod priv_types {
     use alloc::string::String;
-    use core::marker::PhantomData;
     use proc_macro2::Span;
     use serde::{Deserialize, Serialize};
 
@@ -407,27 +412,22 @@ pub mod priv_types {
         pub(crate) ordinary_code_suffix: String,
     }
 
-    /// NO need to derive Serialize, Deserialize or Default.
-    #[non_exhaustive]
-    pub struct ConfigAndSpan {
+    pub struct Loaded {
+        pub(crate) source_file_content: String,
         pub(crate) config: Config,
         pub(crate) span: Span,
     }
 
-    pub struct Read {
-        source_file_content: String,
-        //config_and_span: ConfigAndSpan
-    }
-
-    pub(crate) struct Extracted<'a> {
+    pub struct Extracted<'a> {
         pub(crate) preamble: Option<&'a str>,
+        pub(crate) code_blocks: Vec<&'a str>,
     }
 }
 
 mod trait_impls {
     use crate::misc::{SealedTrait, SealedTraitParam};
     use alloc::string::String;
-    use core::marker::PhantomData;
+    use proc_macro2::Span;
 
     impl SealedTrait for crate::priv_types::config::Preamble {
         #[allow(private_interfaces)]
@@ -536,41 +536,69 @@ mod trait_impls {
         }
     }
 
-    impl SealedTrait for crate::priv_types::ConfigAndSpan {
-        #[allow(private_interfaces)]
-        fn _seal(&self, _: &SealedTraitParam) {}
-    }
-    impl crate::traits::ConfigAndSpan for crate::priv_types::ConfigAndSpan {
-        fn config(&self) -> &dyn crate::traits::Config {
-            &self.config
+    impl crate::traits::Loaded for crate::priv_types::Loaded {
+        fn source_file_content(&self) -> &str {
+            &self.source_file_content
         }
-        fn span(&self) -> &proc_macro2::Span {
+        fn config(&self) -> &dyn crate::traits::Config {
+            todo!()
+        }
+        fn span(&self) -> &Span {
             &self.span
+        }
+    }
+
+    impl<'a> crate::traits::Extracted for crate::priv_types::Extracted<'a> {
+        fn preamble(&self) -> Option<&str> {
+            self.preamble
+        }
+        fn code_blocks(&self) -> &[&str] {
+            &self.code_blocks
         }
     }
 }
 
-fn config_and_span(config_content_literal: &Literal) -> impl traits::ConfigAndSpan {
+fn config_and_span(config_content_literal: &Literal) -> (priv_types::Config, Span) {
     let config_content = crate::string_literal_content(config_content_literal);
     let config_content = config_content.as_ref();
     let config = toml::from_str::<priv_types::Config>(config_content);
 
     match config {
-        Ok(config) => priv_types::ConfigAndSpan {
-            config,
-            span: config_content_literal.span(),
-        },
+        Ok(config) => (config, config_content_literal.span()),
         Err(e) => {
             panic!(
-                "Couldn't parse given literal's content as an expected TOML config. Content: {config_content}\n{e:?}"
+                "Couldn't parse given literal's content as an expected TOML config. Content: \
+                 {config_content}\n{e:?}"
             )
         }
     }
 }
 
+#[doc(hidden)]
+pub fn load(config_content_literal: &Literal) -> impl traits::Loaded {
+    let (config, span) = config_and_span(config_content_literal);
+
+    priv_types::Loaded {
+        source_file_content: load_file(config_content_literal),
+        config,
+        span,
+    }
+}
+
+/*
+#[doc(hidden)]
+pub fn extract<'a>(load: &'a impl traits::Loaded) -> impl traits::Extracted {
+    let preamble = if load.
+
+    priv_types::Extracted {
+        preamble,
+        code_blocks
+    }
+}*/
+
+// ------
 /// Internal, used between crates `readme-code-extractor-lib` and `readme-code-extractor-proc` and
 /// `readme-code-extractor` to assure that they're of the same version.
-#[doc(hidden)]
 pub const fn is_exact_version(expected_version: &'static str) -> bool {
     matches!(expected_version.as_bytes(), b"0.1.0")
 }
