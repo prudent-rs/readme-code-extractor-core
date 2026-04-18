@@ -244,7 +244,7 @@ const _S1: &str = /*json*/
 "#;
 
 /// Internal/Only for prudent-rs/readme-code-extractor. SemVer-exempt!
-pub mod traits {
+pub mod public {
     use proc_macro2::Span;
     pub mod config {
 
@@ -301,7 +301,7 @@ pub mod traits {
 
     pub trait Extracted {
         /// Content of the first source block, but only if we do expect a preamble, that is,
-        /// if [crate::traits::config::Preamble::is_no_preamble] returns `false`.
+        /// if [crate::public::config::Preamble::is_no_preamble] returns `false`.
         fn preamble(&self) -> Option<&str>;
         fn code_blocks(&self) -> &[&str];
     }
@@ -441,7 +441,7 @@ mod trait_impls {
             Self::NoPreamble
         }
     }
-    impl crate::traits::config::Preamble for crate::priv_types::config::Preamble {
+    impl crate::public::config::Preamble for crate::priv_types::config::Preamble {
         fn is_no_preamble(&self) -> bool {
             matches!(self, Self::NoPreamble)
         }
@@ -469,7 +469,7 @@ mod trait_impls {
             }
         }
     }
-    impl crate::traits::config::headers::Inserts for crate::priv_types::config::headers::Inserts {
+    impl crate::public::config::headers::Inserts for crate::priv_types::config::headers::Inserts {
         fn inserts<'a>(&'a self) -> &'a [String] {
             &self.inserts
         }
@@ -491,11 +491,11 @@ mod trait_impls {
         }
     }
 
-    impl crate::traits::config::Headers for crate::priv_types::config::Headers {
+    impl crate::public::config::Headers for crate::priv_types::config::Headers {
         fn prefix_before_insert(&self) -> &str {
             &self.prefix_before_insert
         }
-        fn inserts(&self) -> Option<&dyn crate::traits::config::headers::Inserts> {
+        fn inserts(&self) -> Option<&dyn crate::public::config::headers::Inserts> {
             if let Some(inserts) = &self.inserts {
                 Some(inserts)
             } else {
@@ -520,14 +520,14 @@ mod trait_impls {
             }
         }
     }
-    impl crate::traits::Config for crate::priv_types::Config {
+    impl crate::public::Config for crate::priv_types::Config {
         fn file_path(&self) -> &str {
             &self.file_path
         }
-        fn preamble(&self) -> &dyn crate::traits::config::Preamble {
+        fn preamble(&self) -> &dyn crate::public::config::Preamble {
             &self.preamble
         }
-        fn ordinary_code_headers(&self) -> Option<&dyn crate::traits::config::Headers> {
+        fn ordinary_code_headers(&self) -> Option<&dyn crate::public::config::Headers> {
             if let Some(headers) = &self.ordinary_code_headers {
                 Some(headers)
             } else {
@@ -539,11 +539,11 @@ mod trait_impls {
         }
     }
 
-    impl crate::traits::Loaded for crate::priv_types::Loaded {
+    impl crate::public::Loaded for crate::priv_types::Loaded {
         fn source_file_content(&self) -> &str {
             &self.source_file_content
         }
-        fn config(&self) -> &dyn crate::traits::Config {
+        fn config(&self) -> &dyn crate::public::Config {
             todo!()
         }
         fn span(&self) -> &Span {
@@ -551,7 +551,7 @@ mod trait_impls {
         }
     }
 
-    impl<'a> crate::traits::Extracted for crate::priv_types::Extracted<'a> {
+    impl<'a> crate::public::Extracted for crate::priv_types::Extracted<'a> {
         fn preamble(&self) -> Option<&str> {
             self.preamble
         }
@@ -578,7 +578,7 @@ fn config_and_span(config_content_literal: &Literal) -> (priv_types::Config, Spa
 }
 
 #[doc(hidden)]
-pub fn load(config_content_literal: &Literal) -> impl traits::Loaded {
+pub fn load(config_content_literal: &Literal) -> impl public::Loaded {
     let (config, span) = config_and_span(config_content_literal);
 
     priv_types::Loaded {
@@ -649,7 +649,7 @@ fn readme_blocks_iter(source_content: &str) {
 }
 /*
 #[doc(hidden)]
-pub fn extract<'a>(load: &'a impl traits::Loaded) -> impl traits::Extracted {
+pub fn extract<'a>(load: &'a impl public::Loaded) -> impl public::Extracted {
     let mut code_chars_indices = load.source_file_content().char_indices();
 
     let mut block_start = 0usize;
