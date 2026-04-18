@@ -143,6 +143,12 @@ pub use string_literal_content::string_literal_content;
 /// Restriction: We support only files that are in UTF-8 (the content is in UTF-8).
 ///
 /// Return content of the file.
+///
+/// This function is NOT testable here, because it requires a literal that has [proc_macro2::Span]
+/// (as returned by [proc_macro2::Literal::span]) that comes from a real file and not from a test.
+/// (That is, [proc_macro2::Span::local_file] must return [Some].)
+///
+/// Therefore, this function is tested as a part of `prudent-rs/readme_code_extractor_proc`.
 pub fn load_file(file_relative_path: &Literal) -> String {
     let span = file_relative_path.span();
 
@@ -153,10 +159,10 @@ pub fn load_file(file_relative_path: &Literal) -> String {
         let invoker_file_path = span.local_file().unwrap_or_else(|| {
             panic!(
                 "Rust source file that invoked \
-                     readme_code_extractor_lib::load_file \
-                     (through readme_code_extractor::all_by_file! or similar) \
-                     macro for file with relative path \
-                     {file_relative_path} should have a known location."
+                 readme_code_extractor_lib::load_file \
+                 (through readme_code_extractor::all_by_file! or similar) \
+                 macro for file with relative path \
+                 {file_relative_path} should have a known location."
             )
         });
         let invoker_parent_dir = invoker_file_path.parent().unwrap_or_else(|| {
@@ -243,6 +249,7 @@ pub mod private {
     use toml::de::Error as TomlError;
 
     pub mod traits {
+        use proc_macro2::Span;
         pub mod config {
             //use alloc::string::String;
 
@@ -290,15 +297,21 @@ pub mod private {
 
             fn ordinary_code_suffix(&self) -> &str;
         }
+
+        pub trait ConfigAndSpan: crate::misc::SealedTrait {
+            fn config(&self) -> &dyn Config;
+            fn span(&self) -> &Span;
+        }
     }
 
     pub mod types {
-        use alloc::{borrow::ToOwned, string::String};
+        use alloc::string::String;
         use core::marker::PhantomData;
+        use proc_macro2::Span;
         use serde::{Deserialize, Serialize};
 
         pub mod config {
-            use alloc::{borrow::ToOwned, string::String};
+            use alloc::string::String;
             use serde::{Deserialize, Serialize};
 
             /// Whether the very first code block is a preamble that needs special handling.
@@ -332,14 +345,9 @@ pub mod private {
                 /// [Preamble::CopyVerbatim].
                 ItemsWithPrefix(String),
             }
-            impl Default for Preamble {
-                fn default() -> Self {
-                    Self::NoPreamble
-                }
-            }
 
             pub mod headers {
-                use alloc::{borrow::ToOwned, string::String, vec, vec::Vec};
+                use alloc::{string::String, vec::Vec};
                 use serde::{Deserialize, Serialize};
 
                 #[derive(Serialize, Deserialize, Debug)]
@@ -354,21 +362,13 @@ pub mod private {
                     ///
                     /// Example of useful inserts: Names of test functions (or parts of such names) to
                     /// generate, one per each non-preamble code block.
-                    pub inserts: Vec<String>,
+                    pub(crate) inserts: Vec<String>,
 
                     /// Content to be injected at the beginning of each non-preamble code block, but
                     /// AFTER an insert.
                     ///
                     /// Example of useful inserts for generating test functions: `() {`.
-                    pub after_insert: String,
-                }
-                impl Default for Inserts {
-                    fn default() -> Self {
-                        Self {
-                            inserts: vec![],
-                            after_insert: "".to_owned(),
-                        }
-                    }
+                    pub(crate) after_insert: String,
                 }
             }
 
@@ -379,17 +379,9 @@ pub mod private {
                 /// an insert (if any).
                 ///
                 /// Example of useful prefix: `#[test] fn test_` for test functions to generate.
-                pub prefix_before_insert: String,
+                pub(crate) prefix_before_insert: String,
 
-                pub inserts: Option<headers::Inserts>,
-            }
-            impl Default for Headers {
-                fn default() -> Self {
-                    Self {
-                        prefix_before_insert: "".to_owned(),
-                        inserts: None,
-                    }
-                }
+                pub(crate) inserts: Option<headers::Inserts>,
             }
         }
 
@@ -398,45 +390,45 @@ pub mod private {
         /// To prevent the users on depending on pattern matching completeness etc.
         #[non_exhaustive]
         pub struct Config<S: crate::misc::SealedTrait> {
-            _seal: PhantomData<S>,
+            pub(crate) _seal: PhantomData<S>,
 
             /// **Relative** path (relative to the directory of Rust source file that invoked the chain
             /// of macros). Defaults to "README.md".
-            pub file_path: String,
+            pub(crate) file_path: String,
 
-            pub preamble: config::Preamble,
+            pub(crate) preamble: config::Preamble,
 
-            pub ordinary_code_headers: Option<config::Headers>,
+            pub(crate) ordinary_code_headers: Option<config::Headers>,
 
             /// Suffix to be appended at the end of any non-preamble code block.
             ///
             /// Example of useful inserts for generating test functions: `}`.
-            pub ordinary_code_suffix: String,
+            pub(crate) ordinary_code_suffix: String,
         }
 
-        impl<S: crate::misc::SealedTrait> Default for Config<S> {
-            fn default() -> Self {
-                Config {
-                    _seal: PhantomData,
-
-                    file_path: "README.md".to_owned(),
-
-                    preamble: config::Preamble::NoPreamble,
-
-                    ordinary_code_headers: None,
-                    ordinary_code_suffix: "".to_owned(),
-                }
-            }
+        /// To prevent the users on depending on pattern matching completeness etc.
+        ///
+        /// NO need to derive Serialize, Deserialize or Default.
+        #[non_exhaustive]
+        pub struct ConfigAndSpan<'a, S: crate::misc::SealedTrait> {
+            pub(crate) config: Config<S>,
+            pub(crate) span: &'a Span,
         }
     }
 
     mod trait_impls {
         use crate::misc::{SealedTrait, SealedTraitParam};
         use alloc::string::String;
+        use core::marker::PhantomData;
 
         impl SealedTrait for crate::private::types::config::Preamble {
             #[allow(private_interfaces)]
             fn _seal(&self, _: &SealedTraitParam) {}
+        }
+        impl Default for crate::private::types::config::Preamble {
+            fn default() -> Self {
+                Self::NoPreamble
+            }
         }
         impl crate::private::traits::config::Preamble for crate::private::types::config::Preamble {
             fn is_no_preamble(&self) -> bool {
@@ -458,6 +450,14 @@ pub mod private {
             #[allow(private_interfaces)]
             fn _seal(&self, _: &SealedTraitParam) {}
         }
+        impl Default for crate::private::types::config::headers::Inserts {
+            fn default() -> Self {
+                Self {
+                    inserts: vec![],
+                    after_insert: "".to_owned(),
+                }
+            }
+        }
         impl crate::private::traits::config::headers::Inserts
             for crate::private::types::config::headers::Inserts
         {
@@ -473,6 +473,15 @@ pub mod private {
             #[allow(private_interfaces)]
             fn _seal(&self, _: &SealedTraitParam) {}
         }
+        impl Default for crate::private::types::config::Headers {
+            fn default() -> Self {
+                Self {
+                    prefix_before_insert: "".to_owned(),
+                    inserts: None,
+                }
+            }
+        }
+
         impl crate::private::traits::config::Headers for crate::private::types::config::Headers {
             fn prefix_before_insert(&self) -> &str {
                 &self.prefix_before_insert
@@ -489,6 +498,20 @@ pub mod private {
         impl<S: SealedTrait> SealedTrait for crate::private::types::Config<S> {
             #[allow(private_interfaces)]
             fn _seal(&self, _: &SealedTraitParam) {}
+        }
+        impl<S: crate::misc::SealedTrait> Default for crate::private::types::Config<S> {
+            fn default() -> Self {
+                Self {
+                    _seal: PhantomData,
+
+                    file_path: "README.md".to_owned(),
+
+                    preamble: crate::private::types::config::Preamble::NoPreamble,
+
+                    ordinary_code_headers: None,
+                    ordinary_code_suffix: "".to_owned(),
+                }
+            }
         }
         impl<S: SealedTrait> crate::private::traits::Config for crate::private::types::Config<S> {
             fn file_path(&self) -> &str {
@@ -508,6 +531,21 @@ pub mod private {
             }
             fn ordinary_code_suffix(&self) -> &str {
                 &self.ordinary_code_suffix
+            }
+        }
+
+        impl<'a, S: SealedTrait> SealedTrait for crate::private::types::ConfigAndSpan<'a, S> {
+            #[allow(private_interfaces)]
+            fn _seal(&self, _: &SealedTraitParam) {}
+        }
+        impl<'a, S: SealedTrait> crate::private::traits::ConfigAndSpan
+            for crate::private::types::ConfigAndSpan<'a, S>
+        {
+            fn config(&self) -> &dyn crate::private::traits::Config {
+                &self.config
+            }
+            fn span(&self) -> &proc_macro2::Span {
+                self.span
             }
         }
     }
@@ -584,5 +622,12 @@ mod tests {
         let literal = Literal::from_str(&enclosed).unwrap();
 
         assert_eq!(crate::string_literal_content(&literal).as_ref(), content);
+    }
+
+    #[test]
+    fn load_file_() {
+        let literal = Literal::string("tests/file_1.txt");
+        let file_content = crate::load_file(&literal);
+        assert_eq!(file_content, "Hi from file_1.txt");
     }
 }
