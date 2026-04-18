@@ -79,7 +79,7 @@ mod string_literal_content {
                     last, '"',
                     "Expecting the last character to be a closing quote '\"', but it's: '{last}'."
                 );
-                (1, enclosed.len() - 2)
+                (1, enclosed.len() - 1)
             } else {
                 // raw string literals
                 let mut num_of_hashes = 0usize;
@@ -96,7 +96,7 @@ mod string_literal_content {
                         );
                     }
                 }
-                for _ in [0..num_of_hashes] {
+                for _ in 0..num_of_hashes {
                     if let Some(c) = chars.next_back() {
                         assert_eq!(
                             c, '#',
@@ -566,3 +566,56 @@ const _ASSERT_VERSION: () = {
         );
     }
 };
+
+#[cfg(test)]
+mod tests {
+    use core::str::FromStr;
+    use proc_macro2::Literal;
+
+    #[test]
+    fn string_literal_constructor() {
+        let content = "ordinary literal";
+        let literal = Literal::string(content);
+        assert_eq!(crate::string_literal_content(&literal).as_ref(), content);
+    }
+
+    #[test]
+    fn string_literal_from_str_ordinary() {
+        let content = "ordinary literal";
+
+        let enclosed = format!("\"{content}\"");
+        let literal = Literal::from_str(&enclosed).unwrap();
+
+        assert_eq!(crate::string_literal_content(&literal).as_ref(), content);
+    }
+
+    #[test]
+    fn string_literal_from_str_raw_0() {
+        let content = "ordinary literal";
+
+        let enclosed = format!("r\"{content}\"");
+        let literal = Literal::from_str(&enclosed).unwrap();
+
+        assert_eq!(crate::string_literal_content(&literal).as_ref(), content);
+    }
+
+    #[test]
+    fn string_literal_from_str_raw_1() {
+        let content = "ordinary literal";
+
+        let enclosed = format!("r#\"{content}\"#");
+        let literal = Literal::from_str(&enclosed).unwrap();
+
+        assert_eq!(crate::string_literal_content(&literal).as_ref(), content);
+    }
+
+    #[test]
+    fn string_literal_from_str_raw_2() {
+        let content = "ordinary literal";
+
+        let enclosed = format!("r##\"{content}\"##");
+        let literal = Literal::from_str(&enclosed).unwrap();
+
+        assert_eq!(crate::string_literal_content(&literal).as_ref(), content);
+    }
+}
