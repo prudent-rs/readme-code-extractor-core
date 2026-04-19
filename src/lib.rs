@@ -650,17 +650,11 @@ pub fn load(config_content_literal: &Literal) -> impl public::Loaded {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
-enum ReadmeBlockType {
-    Text,
-    Code,
-}
-
 struct ReadmeBlocksIter<'a> {
     code_char_indices: CharIndices<'a>,
 }
 
-/// Conditional take & drop - only if the peeked value matches the given pattern.
+/// Peek, then conditional take & drop - only if the peeked value matches the given pattern.
 ///
 /// Return NOT an iterated value, but bool whether it took & dropped a value, or not.
 macro_rules! peek_and_drop {
@@ -674,40 +668,85 @@ macro_rules! peek_and_drop {
     }};
 }
 
-fn readme_blocks_iter(source_content: &str) {
-    //-> impl Iterator<Item = (&str, ReadmeBlockItemType)> {
+#[allow(unused)] //@TODO <--- remove]
+fn readme_blocks_iter(source_content: &str) -> impl Iterator<Item = private::ReadmeBlock> {
     let mut pairs = source_content.char_indices().peekable();
-    let mut item_type = ReadmeBlockType::Text;
 
-    // Exclusive - so it will be the beginning of the next item to return
-    let mut last_item_end = 0usize;
+    // Beginning of the current string slice to return. Byte index.
+    let mut item_start = 0usize;
 
-    //core::iter::from_fn( move || {
-    while let Some((byte_idx, c)) = pairs.next() {
-        if c != '\n' {
-            continue;
-        }
-        /*while let Some((_, c)) = pairs.peek() && (*c==' ' || *c=='\t') {
-            pairs.next();
-        }*/
-        /*if let Some((_, '/'))= pairs.peek() && {
-            pairs.next();
-            true
-        } && true
-        {}*/
-        if peek_and_drop!(pairs, Some((_, '`')))
-            && peek_and_drop!(pairs, Some((_, '`')))
-            && peek_and_drop!(pairs, Some((_, '`')))
-        {
-            while let Some((byte_idx, c)) = pairs.next() {
-                if c != '\n' {
-                    continue;
+    // Type of the current item (the one to be returned, if any more input, and if input is valid).
+    // true means code, false means text.
+    let mut item_is_code = false;
+
+    // Exclusive - so it will the byte index right after the third backtick before the code itself. Used only when item_is_code==true.
+    let mut code_triple_backtick_suffix_end = Option::<usize>::None;
+
+    core::iter::from_fn(move || {
+        while let Some((byte_idx, c)) = pairs.next() {
+            if c != '\n' {
+                continue;
+            } else {
+                if item_is_code && code_triple_backtick_suffix_end == None {
+                    code_triple_backtick_suffix_end = Some(byte_idx)
                 }
             }
-        }
-    }
 
-    //});
+            /*while let Some((_, c)) = pairs.peek() && (*c==' ' || *c=='\t') {
+                pairs.next();
+            }*/
+            /*if let Some((_, '/'))= pairs.peek() && {
+                pairs.next();
+                true
+            } && true
+            {}*/
+            if peek_and_drop!(pairs, Some((_, '`')))
+                && peek_and_drop!(pairs, Some((_, '`')))
+                && peek_and_drop!(pairs, Some((_, '`')))
+            {
+                /// Handle immediate end of file - with no trailing new line
+                let next = pairs.peek();
+                let next_block_start = if let Some(&(idx, _)) = next {
+                    idx
+                } else {
+                    source_content.len()
+                };
+
+                let result = if item_is_code {
+                    let code_triple_backtick_suffix_end = code_triple_backtick_suffix_end.unwrap_or_else(|| {
+                        panic!("Internal error: code_triple_backtick_suffix_end should have been set.");
+                    });
+
+                    private::ReadmeBlock::Code(private::CodeBlock {
+                        triple_backtick_suffix: &source_content
+                            [item_start..code_triple_backtick_suffix_end],
+
+                        code: &source_content[code_triple_backtick_suffix_end..next_block_start],
+                    })
+                } else {
+                    private::ReadmeBlock::Text(&source_content[item_start..next_block_start])
+                };
+                item_is_code = !item_is_code;
+                item_start = next_block_start;
+                code_triple_backtick_suffix_end = None;
+                return Some(result);
+            }
+        }
+        if item_is_code {
+            panic!(
+                "Last code block is not enclosed with three backticks. It started at UTF-8 \n
+                 zero-based byte index {item_start}."
+            );
+        } else {
+            return if item_start < source_content.len() {
+                Some(private::ReadmeBlock::Text(
+                    &source_content[item_start..source_content.len()],
+                ))
+            } else {
+                None
+            };
+        }
+    })
 }
 /*
 #[doc(hidden)]
