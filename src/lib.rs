@@ -9,140 +9,138 @@ use proc_macro2::{Literal, Span};
 use public::Config;
 use public::config::Preamble;
 
-mod string_literal_content {
-    use proc_macro2::Literal;
-
-    struct OwnedStringSlice {
-        s: String,
-        start_incl: usize,
-        end_excl: usize,
-    }
-    impl OwnedStringSlice {
-        pub fn new(s: String, start_incl: usize, end_excl: usize) -> Self {
-            Self {
-                s,
-                start_incl,
-                end_excl,
-            }
+/// Internal, even though public - unlikely to change much. Being public makes
+/// [ConfigContentAndSpan] and other code much simpler.
+#[derive(Debug)]
+struct OwnedStringSlice {
+    s: String,
+    start_incl: usize,
+    end_excl: usize,
+}
+impl OwnedStringSlice {
+    pub fn new(s: String, start_incl: usize, end_excl: usize) -> Self {
+        Self {
+            s,
+            start_incl,
+            end_excl,
         }
     }
-    impl AsRef<str> for OwnedStringSlice {
-        fn as_ref(&self) -> &str {
-            &self.s[self.start_incl..self.end_excl]
-        }
+}
+impl AsRef<str> for OwnedStringSlice {
+    fn as_ref(&self) -> &str {
+        &self.s[self.start_incl..self.end_excl]
     }
+}
 
-    /// Return string content stored in a given literal. The literal can be
-    /// - within quotes "...", or
-    /// - a raw string literal `r"...", r#"..."#, r##"..."` (and so on). Do NOT escape - the
-    ///   backslash character '\\' in a raw string literal does no escaping.
-    ///
-    /// There does exist
-    /// https://docs.rs/proc-macro2/latest/proc_macro2/struct.Literal.html#method.str_value, but
-    /// - enabling it is not trivial (its `procmacro2_semver_exempt` is NOT a feature); and anyway
-    /// - it works with `nightly` Rust toolchain only.
-    ///
-    /// Implementation notes - they matter, so you make an informed decision. We
-    /// - call `proc_macro2::Literal`'s
-    ///   [`to_string()`](https://docs.rs/proc-macro2/latest/proc_macro2/struct.Literal.html#impl-ToString-for-T)
-    /// - that returns `String`, whose **content** is enclosed within quotes `"` and any quotes (and
-    ///   special characters) are escaped.
-    /// - simply
-    ///   - if the string literal starts with a quote '"', remove the leading and trailing quotation
-    ///     marks (or, actually, slice it).
-    ///   - if the string literal starts with `r", r#", r##", r###"` etc., remove that and the
-    ///     appropriate trailing group `", "#, "xx, "xxx` etc. (actually, slice it).
-    ///
-    /// PANIC is UNLIKELY - it should be only due to an internal error in rustc and/or proc_macro2.
-    pub fn string_literal_content(literal: &Literal) -> impl AsRef<str> {
-        // Initially it's enclosed by "...", r"...", r#"..."# etc.
-        let enclosed = literal.to_string();
-        if enclosed.len() < 2 {
-            panic!(
-                "Expecting an enclosed string literal (at least two bytes), but received: {}",
-                enclosed
+/// Return string content stored in a given literal. The literal can be
+/// - within quotes "...", or
+/// - a raw string literal `r"...", r#"..."#, r##"..."` (and so on). Do NOT escape - the
+///   backslash character '\\' in a raw string literal does no escaping.
+///
+/// There does exist
+/// https://docs.rs/proc-macro2/latest/proc_macro2/struct.Literal.html#method.str_value, but
+/// - enabling it is not trivial (its `procmacro2_semver_exempt` is NOT a feature); and anyway
+/// - it works with `nightly` Rust toolchain only.
+///
+/// Implementation notes - they matter, so you make an informed decision. We
+/// - call `proc_macro2::Literal`'s
+///   [`to_string()`](https://docs.rs/proc-macro2/latest/proc_macro2/struct.Literal.html#impl-ToString-for-T)
+/// - that returns `String`, whose **content** is enclosed within quotes `"` and any quotes (and
+///   special characters) are escaped.
+/// - simply
+///   - if the string literal starts with a quote '"', remove the leading and trailing quotation
+///     marks (or, actually, slice it).
+///   - if the string literal starts with `r", r#", r##", r###"` etc., remove that and the
+///     appropriate trailing group `", "#, "xx, "xxx` etc. (actually, slice it).
+///
+/// PANIC is UNLIKELY - it should be only due to an internal error in rustc and/or proc_macro2.
+pub fn string_literal_content(literal: &Literal) -> OwnedStringSlice {
+    // Initially it's enclosed by "...", r"...", r#"..."# etc.
+    let enclosed = literal.to_string();
+    if enclosed.len() < 2 {
+        panic!(
+            "Expecting an enclosed string literal (at least two bytes), but received: {}",
+            enclosed
+        );
+    }
+    // ASCII is common for code scope-only configuration, so applying the initial size same as
+    // number of bytes.
+    //let mut chars = Vec::with_capacity(enclosed.len());
+    //chars.extend(enclosed.chars());
+    let mut chars = enclosed.chars();
+    let first = chars
+        .next()
+        .unwrap_or_else(|| panic!("Can't parse the first character of: {enclosed}"));
+
+    let (start_incl, end_excl) = if first == '"' || first == 'r' {
+        if first == '"' {
+            // ordinary "string literals"
+            let last = chars
+                .next_back()
+                .unwrap_or_else(|| panic!("Can't parse the last character of: {enclosed}"));
+
+            assert_eq!(
+                last, '"',
+                "Expecting the last character to be a closing quote '\"', but it's: '{last}'."
             );
-        }
-        // ASCII is common for code scope-only configuration, so applying the initial size same as
-        // number of bytes.
-        //let mut chars = Vec::with_capacity(enclosed.len());
-        //chars.extend(enclosed.chars());
-        let mut chars = enclosed.chars();
-        let first = chars
-            .next()
-            .unwrap_or_else(|| panic!("Can't parse the first character of: {enclosed}"));
-
-        let (start_incl, end_excl) = if first == '"' || first == 'r' {
-            if first == '"' {
-                // ordinary "string literals"
-                let last = chars
-                    .next_back()
-                    .unwrap_or_else(|| panic!("Can't parse the last character of: {enclosed}"));
-
-                assert_eq!(
-                    last, '"',
-                    "Expecting the last character to be a closing quote '\"', but it's: '{last}'."
-                );
-                (1, enclosed.len() - 1)
-            } else {
-                // raw string literals
-                let mut num_of_hashes = 0usize;
-                while let Some(c) = chars.next() {
-                    if c == '#' {
-                        num_of_hashes += 1;
-                        continue;
-                    } else if c == '"' {
-                        break;
-                    } else {
-                        panic!(
-                            "Expecting a raw string literal, but surprised by '{c}'. \
-                             Whole literal: {enclosed}"
-                        );
-                    }
+            (1, enclosed.len() - 1)
+        } else {
+            // raw string literals
+            let mut num_of_hashes = 0usize;
+            while let Some(c) = chars.next() {
+                if c == '#' {
+                    num_of_hashes += 1;
+                    continue;
+                } else if c == '"' {
+                    break;
+                } else {
+                    panic!(
+                        "Expecting a raw string literal, but surprised by '{c}'. \
+                            Whole literal: {enclosed}"
+                    );
                 }
-                for _ in 0..num_of_hashes {
-                    if let Some(c) = chars.next_back() {
-                        assert_eq!(
-                            c, '#',
-                            "Expecting a raw string literal, but it seems not \
-                             closed. Surprised by character '{c}' near the end. \
-                             Whole literal: {enclosed}"
-                        );
-                    } else {
-                        panic!(
-                            "Expecting a raw string literal, but it seems not closed. \
-                             Expecting a hash character '#' near the end, but out of \
-                             characters. Whole literal: {enclosed}"
-                        );
-                    }
-                }
+            }
+            for _ in 0..num_of_hashes {
                 if let Some(c) = chars.next_back() {
                     assert_eq!(
-                        c, '"',
-                        "Expecting a raw string literal, but it seems not closed. \
-                         Expecting a quote character '\"' near the end, but \
-                         received '{c}' character instead. Whole literal: {enclosed}"
+                        c, '#',
+                        "Expecting a raw string literal, but it seems not \
+                            closed. Surprised by character '{c}' near the end. \
+                            Whole literal: {enclosed}"
                     );
                 } else {
                     panic!(
                         "Expecting a raw string literal, but it seems not closed. \
-                         Expecting a quote character '\"' near the end, but out of \
-                         characters. Whole literal: {enclosed}"
+                            Expecting a hash character '#' near the end, but out of \
+                            characters. Whole literal: {enclosed}"
                     );
                 }
-                (2 + num_of_hashes, enclosed.len() - 1 - num_of_hashes)
             }
-        } else {
-            panic!(
-                "Expecting a string literal, which would be either \"...\", or r\"...\", \
-                 r#\"...\"#, r##\"...\"## (and so on). But received: {enclosed}"
-            )
-        };
+            if let Some(c) = chars.next_back() {
+                assert_eq!(
+                    c, '"',
+                    "Expecting a raw string literal, but it seems not closed. \
+                        Expecting a quote character '\"' near the end, but \
+                        received '{c}' character instead. Whole literal: {enclosed}"
+                );
+            } else {
+                panic!(
+                    "Expecting a raw string literal, but it seems not closed. \
+                        Expecting a quote character '\"' near the end, but out of \
+                        characters. Whole literal: {enclosed}"
+                );
+            }
+            (2 + num_of_hashes, enclosed.len() - 1 - num_of_hashes)
+        }
+    } else {
+        panic!(
+            "Expecting a string literal, which would be either \"...\", or r\"...\", \
+                r#\"...\"#, r##\"...\"## (and so on). But received: {enclosed}"
+        )
+    };
 
-        OwnedStringSlice::new(enclosed, start_incl, end_excl)
-    }
+    OwnedStringSlice::new(enclosed, start_incl, end_excl)
 }
-pub use string_literal_content::string_literal_content;
 
 /// Restriction: We support only files that are in UTF-8 (the content is in UTF-8).
 ///
@@ -153,10 +151,7 @@ pub use string_literal_content::string_literal_content;
 /// (That is, [proc_macro2::Span::local_file] must return [Some].)
 ///
 /// Therefore, this function is tested as a part of `prudent-rs/readme_code_extractor_proc`.
-pub fn load_file(file_relative_path: &Literal) -> String {
-    let span = file_relative_path.span();
-
-    let file_relative_path = string_literal_content(file_relative_path);
+pub fn load_file(file_relative_path: impl AsRef<str>, span: &Span) -> String {
     let file_relative_path = file_relative_path.as_ref();
 
     let cfg_file_path = {
@@ -278,7 +273,8 @@ pub mod public {
                 //   NOT be dyn-compatible. (That doesn't matter with the current design, but it
                 //   would matter if we use &dyn or Box<dyn ...>.)
                 // - A slice is more flexible/useable than an [Iterator]. And it knows its length.
-                fn inserts<'a>(&'a self) -> &'a [String];
+                //fn inserts<'a>(&'a self) -> &'a [&'a str];
+                fn inserts<'a>(&self) -> &[&str];
 
                 fn after_insert(&self) -> &str;
             }
@@ -363,7 +359,7 @@ pub mod private {
         ///
         /// Intentionally NOT implementing [Clone], as we don't want user code to make copies.
         #[derive(Serialize, Deserialize, Debug)]
-        pub enum Preamble {
+        pub enum Preamble<'a> {
             /// No preamble - the very first code block is a non-Preamble block (handled by
             /// injecting any header and/or body strings if set in [crate::private::Config]).
             NoPreamble,
@@ -388,7 +384,7 @@ pub mod private {
             ///
             /// If the [String] value is an empty string, then this is equivalent to
             /// [Preamble::CopyVerbatim].
-            ItemsWithPrefix(String),
+            ItemsWithPrefix(&'a str),
         }
 
         pub mod headers {
@@ -397,7 +393,7 @@ pub mod private {
 
             #[derive(Serialize, Deserialize, Debug)]
             #[serde(default)]
-            pub struct Inserts {
+            pub struct Inserts<'a> {
                 /// A list of strings to be injected after the injected
                 /// [crate::private::config::Headers::prefix_before_insert], and before the beginning
                 /// of the existing code of each non-preamble code block. Each string from this list
@@ -407,40 +403,43 @@ pub mod private {
                 ///
                 /// Example of useful inserts: Names of test functions (or parts of such names) to
                 /// generate, one per each non-preamble code block.
-                pub(crate) inserts: Vec<String>,
+                pub(crate) inserts: Vec<&'a str>,
 
                 /// Content to be injected at the beginning of each non-preamble code block, but
                 /// AFTER an insert.
                 ///
                 /// Example of useful inserts for generating test functions: `() {`.
-                pub(crate) after_insert: String,
+                pub(crate) after_insert: &'a str,
             }
         }
 
         #[derive(Serialize, Deserialize, Debug)]
         #[serde(default)]
-        pub struct Headers {
+        pub struct Headers<'a> {
             /// Prefix to be injected at the beginning of any non-preamble code block, even before
             /// an insert (if any).
             ///
             /// Example of useful prefix: `#[test] fn test_` for test functions to generate.
-            pub(crate) prefix_before_insert: String,
+            pub(crate) prefix_before_insert: &'a str,
 
-            pub(crate) inserts: Option<headers::Inserts>,
+            #[serde(borrow)]
+            pub(crate) inserts: Option<headers::Inserts<'a>>,
         }
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     #[serde(default)]
     #[non_exhaustive]
-    pub struct Config {
+    pub struct Config<'a> {
         /// **Relative** path (relative to the directory of Rust source file that invoked the chain
         /// of macros). Defaults to "README.md".
         pub(crate) file_path: String,
 
-        pub(crate) preamble: config::Preamble,
+        #[serde(borrow)]
+        pub(crate) preamble: config::Preamble<'a>,
 
-        pub(crate) ordinary_code_headers: Option<config::Headers>,
+        #[serde(borrow)]
+        pub(crate) ordinary_code_headers: Option<config::Headers<'a>>,
 
         /// Suffix to be appended at the end of any non-preamble code block.
         ///
@@ -449,10 +448,10 @@ pub mod private {
     }
 
     #[derive(Debug)]
-    pub struct Loaded {
+    pub struct Loaded<'a> {
         pub(crate) source_file_content: String,
-        pub(crate) config: Config,
-        pub(crate) span: Span,
+        pub(crate) config: &'a Config<'a>,
+        pub(crate) span: &'a Span,
     }
 
     #[derive(Debug)]
@@ -486,19 +485,18 @@ pub mod private {
 
 mod trait_impls {
     use crate::misc::{SealedTrait, SealedTraitParam};
-    use alloc::string::String;
     use proc_macro2::Span;
 
-    impl SealedTrait for crate::private::config::Preamble {
+    impl<'a> SealedTrait for crate::private::config::Preamble<'a> {
         #[allow(private_interfaces)]
         fn _seal(&self, _: &SealedTraitParam) {}
     }
-    impl Default for crate::private::config::Preamble {
+    impl<'a> Default for crate::private::config::Preamble<'a> {
         fn default() -> Self {
             Self::NoPreamble
         }
     }
-    impl crate::public::config::Preamble for crate::private::config::Preamble {
+    impl<'a> crate::public::config::Preamble for crate::private::config::Preamble<'a> {
         fn is_no_preamble(&self) -> bool {
             matches!(self, Self::NoPreamble)
         }
@@ -514,20 +512,21 @@ mod trait_impls {
         }
     }
 
-    impl SealedTrait for crate::private::config::headers::Inserts {
+    impl<'a> SealedTrait for crate::private::config::headers::Inserts<'a> {
         #[allow(private_interfaces)]
         fn _seal(&self, _: &SealedTraitParam) {}
     }
-    impl Default for crate::private::config::headers::Inserts {
+    impl<'a> Default for crate::private::config::headers::Inserts<'a> {
         fn default() -> Self {
             Self {
                 inserts: vec![],
-                after_insert: "".to_owned(),
+                after_insert: "",
             }
         }
     }
-    impl crate::public::config::headers::Inserts for crate::private::config::headers::Inserts {
-        fn inserts<'a>(&'a self) -> &'a [String] {
+    impl<'a> crate::public::config::headers::Inserts for crate::private::config::headers::Inserts<'a> {
+        //fn inserts<'s>(&'s self) -> &'s[&'s str] {
+        fn inserts(&self) -> &[&str] {
             &self.inserts
         }
         fn after_insert(&self) -> &str {
@@ -535,20 +534,20 @@ mod trait_impls {
         }
     }
 
-    impl SealedTrait for crate::private::config::Headers {
+    impl<'a> SealedTrait for crate::private::config::Headers<'a> {
         #[allow(private_interfaces)]
         fn _seal(&self, _: &SealedTraitParam) {}
     }
-    impl Default for crate::private::config::Headers {
+    impl<'a> Default for crate::private::config::Headers<'a> {
         fn default() -> Self {
             Self {
-                prefix_before_insert: "".to_owned(),
+                prefix_before_insert: "",
                 inserts: None,
             }
         }
     }
 
-    impl crate::public::config::Headers for crate::private::config::Headers {
+    impl<'a> crate::public::config::Headers for crate::private::config::Headers<'a> {
         fn prefix_before_insert(&self) -> &str {
             &self.prefix_before_insert
         }
@@ -561,11 +560,11 @@ mod trait_impls {
         }
     }
 
-    impl SealedTrait for crate::private::Config {
+    impl<'a> SealedTrait for crate::private::Config<'a> {
         #[allow(private_interfaces)]
         fn _seal(&self, _: &SealedTraitParam) {}
     }
-    impl Default for crate::private::Config {
+    impl<'a> Default for crate::private::Config<'a> {
         fn default() -> Self {
             Self {
                 file_path: "README.md".to_owned(),
@@ -577,7 +576,7 @@ mod trait_impls {
             }
         }
     }
-    impl crate::public::Config for crate::private::Config {
+    impl<'a> crate::public::Config for crate::private::Config<'a> {
         fn file_path(&self) -> &str {
             &self.file_path
         }
@@ -595,20 +594,21 @@ mod trait_impls {
             &self.ordinary_code_suffix
         }
     }
+    //-----
 
-    impl SealedTrait for crate::private::Loaded {
+    impl<'a> SealedTrait for crate::private::Loaded<'a> {
         #[allow(private_interfaces)]
         fn _seal(&self, _: &SealedTraitParam) {}
     }
-    impl crate::public::Loaded for crate::private::Loaded {
+    impl<'a> crate::public::Loaded for crate::private::Loaded<'a> {
         fn source_file_content(&self) -> &str {
             &self.source_file_content
         }
         fn config(&self) -> &impl crate::public::Config {
-            &self.config
+            self.config
         }
         fn span(&self) -> &Span {
-            &self.span
+            self.span
         }
     }
 
@@ -663,30 +663,56 @@ mod trait_impls {
     }
 }
 
-fn config_and_span(config_content_literal: &Literal) -> (private::Config, Span) {
-    let config_content = crate::string_literal_content(config_content_literal);
-    let config_content = config_content.as_ref();
-    let config = toml::from_str::<private::Config>(config_content);
+//@TODO Make sealed traits; Move to public:: and private::
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct ConfigContentAndSpan {
+    config_content: OwnedStringSlice,
+    span: Span,
+}
+
+#[doc(hidden)]
+pub fn config_content_and_span(config_content_literal: &Literal) -> ConfigContentAndSpan {
+    ConfigContentAndSpan {
+        config_content: crate::string_literal_content(config_content_literal),
+        span: config_content_literal.span(),
+    }
+}
+
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct ConfigAndSpan<'a> {
+    config: private::Config<'a>,
+    span: &'a Span,
+}
+
+#[doc(hidden)]
+pub fn config_and_span(config_content_and_span: &ConfigContentAndSpan) -> ConfigAndSpan {
+    let config = toml::from_str::<private::Config>(config_content_and_span.config_content.as_ref());
 
     match config {
-        Ok(config) => (config, config_content_literal.span()),
+        Ok(config) => ConfigAndSpan {
+            config,
+            span: &config_content_and_span.span,
+        },
         Err(e) => {
             panic!(
                 "Couldn't parse given literal's content as an expected TOML config. Content: \
-                 {config_content}\n{e:?}"
+                 {}\n{:?}",
+                config_content_and_span.config_content.as_ref(),
+                e
             )
         }
     }
 }
 
 #[doc(hidden)]
-pub fn load(config_content_literal: &Literal) -> impl public::Loaded {
-    let (config, span) = config_and_span(config_content_literal);
-
+pub fn load_readme(config_and_span: &ConfigAndSpan) -> impl public::Loaded {
+    //@TODO file_relative_path !==== config_content_literal!!!
     private::Loaded {
-        source_file_content: load_file(config_content_literal),
-        config,
-        span,
+        source_file_content: load_file(&config_and_span.config.file_path, config_and_span.span),
+        config: &config_and_span.config,
+        span: config_and_span.span,
     }
 }
 
@@ -887,7 +913,8 @@ mod tests {
     #[test]
     fn load_file_() {
         let literal = Literal::string("tests/file_1.txt");
-        let file_content = crate::load_file(&literal);
+        let file_content =
+            crate::load_file(crate::string_literal_content(&literal), &literal.span());
         assert_eq!(file_content, "Hi from file_1.txt");
     }
 }
