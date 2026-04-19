@@ -314,18 +314,25 @@ pub mod public {
         fn is_code(&self) -> Option<&impl CodeBlock>;
     }
 
-    pub trait BlocksIteratorHolder {
+    /*pub trait BlocksIteratorHolder {
         /// Like [Iterator::next].
         fn iter_next(&mut self) -> Option<impl ReadmeBlock>;
-    }
+    }*/
 
     pub trait Extracted: crate::misc::SealedTrait {
-        /// Content of the first source block, but only if we do expect a preamble, that is, if
-        /// [crate::public::config::Preamble::is_no_preamble] returns `false`.
+        /// Content of the first text block, if any, but only if we do expect a preamble, that is,
+        /// if [crate::public::config::Preamble::is_no_preamble] returns `false`.
+        ///
+        /// If it is [Some], then it must be the "text" variant of [ReadmeBlock], that is, its
+        /// [ReadmeBlock::is_code] must return [Some].
+        fn preamble_text(&self) -> Option<&impl ReadmeBlock>;
+
+        /// Content of the first source block, if any, but only if we do expect a preamble, that is,
+        /// if [crate::public::config::Preamble::is_no_preamble] returns `false`.
         ///
         /// If it is [Some], then it must be the "code" variant of [ReadmeBlock], that is, its
         /// [ReadmeBlock::is_code] must return [Some].
-        fn preamble(&self) -> Option<&str>;
+        fn preamble_code(&self) -> Option<&impl ReadmeBlock>;
 
         fn non_preamble_blocks(&mut self) -> &mut impl Iterator<Item = impl ReadmeBlock>;
         //fn non_preamble_blocks(&mut self) -> &mut dyn BlocksIteratorHolder;
@@ -459,9 +466,18 @@ pub mod private {
         Code(CodeBlock<'a>),
     }
 
-    //#[derive(Debug)]
+    #[derive(Debug)]
     pub struct Extracted<'a> {
-        pub preamble: Option<&'a str>,
+        /// [None] if [crate::public::config::Preamble::is_no_preamble]. But it may be [None] even
+        /// for configurations where preamble is configured. For example: early end of input, or no
+        /// text block before the first code block.
+        pub preamble_text: Option<ReadmeBlock<'a>>,
+
+        /// [None] if [crate::public::config::Preamble::is_no_preamble]. But it may be [None] even
+        /// for configurations where preamble is configured. For example: early end of input, or no
+        /// text block before the first code block.
+        pub preamble_code: Option<ReadmeBlock<'a>>,
+
         pub non_preamble_blocks: ReadmeBlocksIter<'a>,
     }
 }
@@ -631,8 +647,11 @@ mod trait_impls {
         fn _seal(&self, _: &SealedTraitParam) {}
     }
     impl<'a> crate::public::Extracted for crate::private::Extracted<'a> {
-        fn preamble(&self) -> Option<&str> {
-            self.preamble
+        fn preamble_text(&self) -> Option<&impl crate::public::ReadmeBlock> {
+            self.preamble_text.as_ref()
+        }
+        fn preamble_code(&self) -> Option<&impl crate::public::ReadmeBlock> {
+            self.preamble_code.as_ref()
         }
         fn non_preamble_blocks(
             &mut self,
@@ -781,14 +800,16 @@ impl<'a> Iterator for ReadmeBlocksIter<'a> {
 pub fn extract<'a>(load: &'a impl public::Loaded) -> impl public::Extracted {
     let readme_blocks = ReadmeBlocksIter::new(load.source_file_content());
 
-    let preamble = if !load.config().preamble().is_no_preamble() {
+    let preamble_text = if !load.config().preamble().is_no_preamble() {
         None
     } else {
         None
     };
+    let preamble_code = todo!();
 
     private::Extracted {
-        preamble,
+        preamble_text,
+        preamble_code,
         non_preamble_blocks: readme_blocks,
     }
 }
