@@ -309,11 +309,21 @@ pub mod public {
         fn is_code(&self) -> Option<&dyn CodeBlock>;
     }
 
+    pub trait BlocksIteratorHolder {
+        /// Like [Iterator::next].
+        fn iter_next(&mut self) -> Option<impl ReadmeBlock>;
+    }
+
     pub trait Extracted: crate::misc::SealedTrait {
-        /// Content of the first source block, but only if we do expect a preamble, that is,
-        /// if [crate::public::config::Preamble::is_no_preamble] returns `false`.
+        /// Content of the first source block, but only if we do expect a preamble, that is, if
+        /// [crate::public::config::Preamble::is_no_preamble] returns `false`.
+        ///
+        /// If it is [Some], then it must be the "code" variant of [ReadmeBlock], that is, its
+        /// [ReadmeBlock::is_code] must return [Some].
         fn preamble(&self) -> Option<&str>;
-        fn readme_blocks(&self) -> &[&str];
+
+        fn non_preamble_blocks(&mut self) -> &mut impl Iterator<Item = impl ReadmeBlock>;
+        //fn non_preamble_blocks(&mut self) -> &mut dyn BlocksIteratorHolder;
     }
 }
 
@@ -432,6 +442,7 @@ pub mod private {
 
     #[derive(Debug)]
     pub struct CodeBlock<'a> {
+        //@TODO everywhere: pub(crate) ----> pub   - since it's behind docs-rs-only feature
         pub(crate) triple_backtick_suffix: &'a str,
         pub(crate) code: &'a str,
     }
@@ -442,10 +453,10 @@ pub mod private {
         Code(CodeBlock<'a>),
     }
 
-    #[derive(Debug)]
-    pub struct Extracted<'a> {
-        pub(crate) preamble: Option<&'a str>,
-        pub(crate) readme_blocks: Vec<&'a str>,
+    //#[derive(Debug)]
+    pub struct Extracted<'a, I: Iterator<Item = ReadmeBlock<'a>>> {
+        pub preamble: Option<&'a str>,
+        pub non_preamble_blocks: I,
     }
 }
 
@@ -609,16 +620,22 @@ mod trait_impls {
         }
     }
 
-    impl<'a> SealedTrait for crate::private::Extracted<'a> {
+    impl<'a, I: Iterator<Item = crate::private::ReadmeBlock<'a>>> SealedTrait
+        for crate::private::Extracted<'a, I>
+    {
         #[allow(private_interfaces)]
         fn _seal(&self, _: &SealedTraitParam) {}
     }
-    impl<'a> crate::public::Extracted for crate::private::Extracted<'a> {
+    impl<'a, I: Iterator<Item = crate::private::ReadmeBlock<'a>>> crate::public::Extracted
+        for crate::private::Extracted<'a, I>
+    {
         fn preamble(&self) -> Option<&str> {
             self.preamble
         }
-        fn readme_blocks(&self) -> &[&str] {
-            &self.readme_blocks
+        fn non_preamble_blocks(
+            &mut self,
+        ) -> &mut impl Iterator<Item = impl crate::public::ReadmeBlock> {
+            &mut self.non_preamble_blocks
         }
     }
 }
@@ -650,6 +667,7 @@ pub fn load(config_content_literal: &Literal) -> impl public::Loaded {
     }
 }
 
+#[derive(Debug)]
 struct ReadmeBlocksIter<'a> {
     code_char_indices: CharIndices<'a>,
 }
@@ -668,7 +686,6 @@ macro_rules! peek_and_drop {
     }};
 }
 
-#[allow(unused)] //@TODO <--- remove]
 fn readme_blocks_iter(source_content: &str) -> impl Iterator<Item = private::ReadmeBlock> {
     let mut pairs = source_content.char_indices().peekable();
 
@@ -679,7 +696,8 @@ fn readme_blocks_iter(source_content: &str) -> impl Iterator<Item = private::Rea
     // true means code, false means text.
     let mut item_is_code = false;
 
-    // Exclusive - so it will the byte index right after the third backtick before the code itself. Used only when item_is_code==true.
+    // Exclusive - so it will the byte index right after the third backtick before the code itself.
+    // Used only when item_is_code==true.
     let mut code_triple_backtick_suffix_end = Option::<usize>::None;
 
     core::iter::from_fn(move || {
@@ -692,19 +710,11 @@ fn readme_blocks_iter(source_content: &str) -> impl Iterator<Item = private::Rea
                 }
             }
 
-            /*while let Some((_, c)) = pairs.peek() && (*c==' ' || *c=='\t') {
-                pairs.next();
-            }*/
-            /*if let Some((_, '/'))= pairs.peek() && {
-                pairs.next();
-                true
-            } && true
-            {}*/
             if peek_and_drop!(pairs, Some((_, '`')))
                 && peek_and_drop!(pairs, Some((_, '`')))
                 && peek_and_drop!(pairs, Some((_, '`')))
             {
-                /// Handle immediate end of file - with no trailing new line
+                // Handle immediate end of file - with no trailing new line
                 let next = pairs.peek();
                 let next_block_start = if let Some(&(idx, _)) = next {
                     idx
@@ -713,9 +723,12 @@ fn readme_blocks_iter(source_content: &str) -> impl Iterator<Item = private::Rea
                 };
 
                 let result = if item_is_code {
-                    let code_triple_backtick_suffix_end = code_triple_backtick_suffix_end.unwrap_or_else(|| {
-                        panic!("Internal error: code_triple_backtick_suffix_end should have been set.");
-                    });
+                    let code_triple_backtick_suffix_end = code_triple_backtick_suffix_end
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Internal error: code_triple_backtick_suffix_end should be set."
+                            );
+                        });
 
                     private::ReadmeBlock::Code(private::CodeBlock {
                         triple_backtick_suffix: &source_content
@@ -738,6 +751,7 @@ fn readme_blocks_iter(source_content: &str) -> impl Iterator<Item = private::Rea
                  zero-based byte index {item_start}."
             );
         } else {
+            todo!();
             return if item_start < source_content.len() {
                 Some(private::ReadmeBlock::Text(
                     &source_content[item_start..source_content.len()],
@@ -748,28 +762,26 @@ fn readme_blocks_iter(source_content: &str) -> impl Iterator<Item = private::Rea
         }
     })
 }
-/*
+
 #[doc(hidden)]
 pub fn extract<'a>(load: &'a impl public::Loaded) -> impl public::Extracted {
     let mut code_chars_indices = load.source_file_content().char_indices();
 
     let mut block_start = 0usize;
 
-    let readme_blocks = core::iter::from_fn( move || {
-
-    });
+    let readme_blocks = readme_blocks_iter(load.source_file_content());
 
     let preamble = if !load.config().preamble().is_no_preamble() {
-
+        None
     } else {
         None
     };
 
     private::Extracted {
         preamble,
-        readme_blocks
+        non_preamble_blocks: readme_blocks,
     }
-}*/
+}
 
 // ------
 /// Internal, used between crates `readme-code-extractor-lib` and `readme-code-extractor-proc` and
