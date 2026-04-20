@@ -33,6 +33,7 @@ y = 1
 h = 1.0
 q = { y = 1. b = 2}
 "#]
+/// @TODO rename "SealedTrait" -> "Trait" etc; rename "misc" -> "seal"
 pub mod misc {
     /// Intentionally NOT public.
     pub(crate) struct SealedTraitParam {}
@@ -70,6 +71,7 @@ const _S1: &str = /*json*/
 
 /// Internal/Only for prudent-rs/readme-code-extractor. SemVer-exempt!
 pub mod public {
+    use alloc::fmt::Debug;
     use proc_macro2::{Literal, Span};
     pub mod config {
 
@@ -88,8 +90,6 @@ pub mod public {
         }
 
         pub mod headers {
-            use alloc::string::String;
-
             pub trait Inserts: crate::misc::SealedTrait {
                 // - NOT returning an [Iterator], because [Iterator]
                 //   - can NOT be `Box`-ed as Box<&dyn Iterator<Item = &'a str>>`, because Iterator
@@ -108,44 +108,44 @@ pub mod public {
 
         pub trait Headers: crate::misc::SealedTrait {
             fn prefix_before_insert(&self) -> &str;
-            fn inserts(&self) -> Option<&impl headers::Inserts>;
+            fn inserts(&self) -> Option<&dyn headers::Inserts>;
         }
     }
 
-    pub trait Config: crate::misc::SealedTrait {
+    pub trait Config: crate::misc::SealedTrait + Debug {
         fn file_path(&self) -> &str;
 
-        fn preamble(&self) -> &impl config::Preamble;
+        fn preamble(&self) -> &dyn config::Preamble;
 
-        fn ordinary_code_headers(&self) -> Option<&impl config::Headers>;
+        fn ordinary_code_headers(&self) -> Option<&dyn config::Headers>;
 
         fn ordinary_code_suffix(&self) -> &str;
     }
     // ----
 
-    pub trait ConfigContentAndSpan: crate::misc::SealedTrait {
+    pub trait ConfigContentAndSpan: crate::misc::SealedTrait + Debug {
         fn config_content(&self) -> &str;
         fn span(&self) -> &Span;
     }
-    pub trait ConfigAndSpan: crate::misc::SealedTrait {
+    pub trait ConfigAndSpan: crate::misc::SealedTrait + Debug {
         fn config(&self) -> &dyn Config;
         fn span(&self) -> &Span;
     }
 
-    pub trait Loaded: crate::misc::SealedTrait {
+    pub trait Loaded: crate::misc::SealedTrait + Debug {
         fn source_file_content(&self) -> &str;
-        fn config(&self) -> &impl Config;
+        fn config(&self) -> &dyn Config;
         fn span(&self) -> &Span;
     }
 
-    pub trait CodeBlock: crate::misc::SealedTrait {
+    pub trait CodeBlock: crate::misc::SealedTrait + Debug {
         fn triple_backtick_suffix(&self) -> &str;
         fn code(&self) -> &str;
     }
 
-    pub trait ReadmeBlock: crate::misc::SealedTrait {
+    pub trait ReadmeBlock: crate::misc::SealedTrait + Debug {
         fn is_text(&self) -> Option<&str>;
-        fn is_code(&self) -> Option<&impl CodeBlock>;
+        fn is_code(&self) -> Option<&dyn CodeBlock>;
     }
 
     /*pub trait BlocksIteratorHolder {
@@ -153,25 +153,47 @@ pub mod public {
         fn iter_next(&mut self) -> Option<impl ReadmeBlock>;
     }*/
 
-    pub trait Extracted: crate::misc::SealedTrait {
+    pub trait Extracted: crate::misc::SealedTrait + Debug {
         /// Content of the first text block, if any, but only if we do expect a preamble, that is,
         /// if [crate::public::config::Preamble::is_no_preamble] returns `false`.
         ///
         /// If it is [Some], then it must be the "text" variant of [ReadmeBlock], that is, its
         /// [ReadmeBlock::is_code] must return [Some].
-        fn preamble_text(&self) -> Option<&impl ReadmeBlock>;
+        fn preamble_text(&self) -> Option<&dyn ReadmeBlock>;
 
         /// Content of the first source block, if any, but only if we do expect a preamble, that is,
         /// if [crate::public::config::Preamble::is_no_preamble] returns `false`.
         ///
         /// If it is [Some], then it must be the "code" variant of [ReadmeBlock], that is, its
         /// [ReadmeBlock::is_code] must return [Some].
-        fn preamble_code(&self) -> Option<&impl ReadmeBlock>;
+        fn preamble_code(&self) -> Option<&dyn ReadmeBlock>;
 
         fn non_preamble_blocks(&mut self) -> &mut impl Iterator<Item = impl ReadmeBlock>;
         //fn non_preamble_blocks(&mut self) -> &mut dyn BlocksIteratorHolder;
     }
     // ------
+
+    #[doc(hidden)]
+    #[derive(Debug)]
+    pub struct OwnedStringSlice {
+        s: String,
+        start_incl: usize,
+        end_excl: usize,
+    }
+    impl OwnedStringSlice {
+        pub fn new(s: String, start_incl: usize, end_excl: usize) -> Self {
+            Self {
+                s,
+                start_incl,
+                end_excl,
+            }
+        }
+    }
+    impl AsRef<str> for OwnedStringSlice {
+        fn as_ref(&self) -> &str {
+            &self.s[self.start_incl..self.end_excl]
+        }
+    }
 
     /// Return string content stored in a given literal. The literal can be
     /// - within quotes "...", or
@@ -195,7 +217,7 @@ pub mod public {
     ///     appropriate trailing group `", "#, "xx, "xxx` etc. (actually, slice it).
     ///
     /// PANIC is UNLIKELY - it should be only due to an internal error in rustc and/or proc_macro2.
-    pub fn string_literal_content(literal: &Literal) -> impl AsRef<str> {
+    pub fn string_literal_content(literal: &Literal) -> OwnedStringSlice {
         // Initially it's enclosed by "...", r"...", r#"..."# etc.
         let enclosed = literal.to_string();
         if enclosed.len() < 2 {
@@ -280,20 +302,23 @@ pub mod public {
             )
         };
 
-        crate::private::OwnedStringSlice::new(enclosed, start_incl, end_excl)
+        OwnedStringSlice::new(enclosed, start_incl, end_excl)
     }
 
     #[doc(hidden)]
     pub fn config_content_and_span(config_content_literal: &Literal) -> impl ConfigContentAndSpan {
-        ConfigContentAndSpan {
-            config_content: crate::string_literal_content(config_content_literal),
+        crate::private::ConfigContentAndSpan {
+            config_content: crate::public::string_literal_content(config_content_literal),
             span: config_content_literal.span(),
         }
     }
 
     #[doc(hidden)]
-    pub fn config_and_span(config_content_and_span: &impl ConfigContentAndSpan) -> impl ConfigAndSpan {
-        let config = toml::from_str::<crate::private::Config>(config_content_and_span.config_content());
+    pub fn config_and_span(
+        config_content_and_span: &impl ConfigContentAndSpan,
+    ) -> impl ConfigAndSpan {
+        let config =
+            toml::from_str::<crate::private::Config>(config_content_and_span.config_content());
 
         match config {
             Ok(config) => crate::private::ConfigAndSpan {
@@ -352,127 +377,21 @@ pub mod public {
         })
     }
 
-    /// Peek, then conditional take & drop - only if the peeked value matches the given pattern.
-    ///
-    /// Return NOT an iterated value, but bool whether it took & dropped a value, or not.
-    macro_rules! peek_and_drop {
-        ($iter_mut:expr, $pat:pat) => {{
-            if let $pat = $iter_mut.peek() {
-                $iter_mut.next();
-                true
-            } else {
-                false
-            }
-        }};
-    }
-
-    /// Parse a README.md-like input. It's an iterator over [private::ReadmeBlock].
-    ///
-    /// We have used a function that called [core::iter::from_fn] and returned a similar iterator. But
-    /// that over-complicated the generic signature of [private::Extracted] to have an `impl
-    /// Iterator<Item = ...>` bound. That mad its `impl` verbose.
-    #[derive(Debug)]
-    struct ReadmeBlocksIter<'a> {
-        source_content: &'a str,
-        pairs: Peekable<CharIndices<'a>>,
-        item_start: usize,
-        item_is_code: bool,
-        code_triple_backtick_suffix_end: Option<usize>,
-    }
-    impl<'a> ReadmeBlocksIter<'a> {
-        fn new(source_content: &'a str) -> Self {
-            Self {
-                source_content,
-                pairs: source_content.char_indices().peekable(),
-                item_start: 0,
-                item_is_code: false,
-                code_triple_backtick_suffix_end: None,
-            }
-        }
-    }
-    impl<'a> Iterator for ReadmeBlocksIter<'a> {
-        type Item = private::ReadmeBlock<'a>;
-
-        fn next(&mut self) -> Option<private::ReadmeBlock<'a>> {
-            while let Some((byte_idx, c)) = self.pairs.next() {
-                if c != '\n' {
-                    continue;
-                } else {
-                    if self.item_is_code && self.code_triple_backtick_suffix_end == None {
-                        self.code_triple_backtick_suffix_end = Some(byte_idx)
-                    }
-                }
-
-                if peek_and_drop!(self.pairs, Some((_, '`')))
-                    && peek_and_drop!(self.pairs, Some((_, '`')))
-                    && peek_and_drop!(self.pairs, Some((_, '`')))
-                {
-                    // Handle immediate end of file - with no trailing new line
-                    let next = self.pairs.peek();
-                    let next_block_start = if let Some(&(idx, _)) = next {
-                        idx
-                    } else {
-                        self.source_content.len()
-                    };
-
-                    let result = if self.item_is_code {
-                        let code_triple_backtick_suffix_end =
-                            self.code_triple_backtick_suffix_end.unwrap_or_else(|| {
-                                panic!(
-                                    "Internal error: code_triple_backtick_suffix_end should be set."
-                                );
-                            });
-
-                        private::ReadmeBlock::Code(private::CodeBlock {
-                            triple_backtick_suffix: &self.source_content
-                                [self.item_start..code_triple_backtick_suffix_end],
-
-                            code: &self.source_content
-                                [code_triple_backtick_suffix_end..next_block_start],
-                        })
-                    } else {
-                        private::ReadmeBlock::Text(
-                            &self.source_content[self.item_start..next_block_start],
-                        )
-                    };
-                    self.item_is_code = !self.item_is_code;
-                    self.item_start = next_block_start;
-                    self.code_triple_backtick_suffix_end = None;
-                    return Some(result);
-                }
-            }
-            if self.item_is_code {
-                panic!(
-                    "Last code block is not enclosed with three backticks. It started at UTF-8 \n
-                    zero-based byte index {}. The rest of the input was: {}",
-                    self.item_start,
-                    &self.source_content[self.item_start..]
-                );
-            } else {
-                return if self.item_start < self.source_content.len() {
-                    Some(private::ReadmeBlock::Text(
-                        &self.source_content[self.item_start..],
-                    ))
-                } else {
-                    None
-                };
-            }
-        }
-    }
-
     #[doc(hidden)]
     pub fn load_readme(config_and_span: &impl ConfigAndSpan) -> impl Loaded {
         crate::private::Loaded {
-            source_file_content: load_file(&config_and_span.config().file_path(), config_and_span.span()),
+            source_file_content: load_file(
+                &config_and_span.config().file_path(),
+                config_and_span.span(),
+            ),
             config: config_and_span.config(),
             span: config_and_span.span(),
         }
     }
 
-
     #[doc(hidden)]
     pub fn extract<'a>(load: &'a impl crate::public::Loaded) -> impl crate::public::Extracted {
-        let mut all_blocks = ReadmeBlocksIter::new(load.source_file_content());
+        let mut all_blocks = crate::private::ReadmeBlocksIter::new(load.source_file_content());
 
         let preamble_text = if !load.config().preamble().is_no_preamble() {
             todo!()
@@ -481,7 +400,7 @@ pub mod public {
         };
         let preamble_code = todo!();
 
-        private::Extracted {
+        crate::private::Extracted {
             preamble_text,
             preamble_code,
             non_preamble_blocks: all_blocks,
@@ -499,6 +418,8 @@ pub mod public {
 /// fails with a compile error if used outside of docs.rs.
 pub(crate) mod private {
     use alloc::string::String;
+    use core::iter::Peekable;
+    use core::str::CharIndices;
     use proc_macro2::Span;
     use serde::{Deserialize, Serialize};
 
@@ -578,27 +499,6 @@ pub(crate) mod private {
         }
     }
 
-    #[derive(Debug)]
-    pub struct OwnedStringSlice {
-        s: String,
-        start_incl: usize,
-        end_excl: usize,
-    }
-    impl OwnedStringSlice {
-        pub fn new(s: String, start_incl: usize, end_excl: usize) -> Self {
-            Self {
-                s,
-                start_incl,
-                end_excl,
-            }
-        }
-    }
-    impl AsRef<str> for OwnedStringSlice {
-        fn as_ref(&self) -> &str {
-            &self.s[self.start_incl..self.end_excl]
-        }
-    }
-
     #[derive(Serialize, Deserialize, Debug)]
     #[serde(default)]
     #[non_exhaustive]
@@ -622,7 +522,7 @@ pub(crate) mod private {
 
     #[derive(Debug)]
     pub struct ConfigContentAndSpan {
-        pub config_content: OwnedStringSlice,
+        pub config_content: crate::public::OwnedStringSlice,
         pub span: Span,
     }
 
@@ -635,7 +535,7 @@ pub(crate) mod private {
     #[derive(Debug)]
     pub struct Loaded<'a> {
         pub(crate) source_file_content: String,
-        pub(crate) config: &'a Config<'a>,
+        pub(crate) config: &'a dyn crate::public::Config,
         pub(crate) span: &'a Span,
     }
 
@@ -650,6 +550,114 @@ pub(crate) mod private {
     pub enum ReadmeBlock<'a> {
         Text(&'a str),
         Code(CodeBlock<'a>),
+    }
+
+    /// Parse a README.md-like input. It's an iterator over [private::ReadmeBlock].
+    ///
+    /// We have used a function that called [core::iter::from_fn] and returned a similar iterator. But
+    /// that over-complicated the generic signature of [private::Extracted] to have an `impl
+    /// Iterator<Item = ...>` bound. That mad its `impl` verbose.
+    #[derive(Debug)]
+    pub(crate) struct ReadmeBlocksIter<'a> {
+        source_content: &'a str,
+        pairs: Peekable<CharIndices<'a>>,
+        item_start: usize,
+        item_is_code: bool,
+        code_triple_backtick_suffix_end: Option<usize>,
+    }
+    impl<'a> ReadmeBlocksIter<'a> {
+        pub(crate) fn new(source_content: &'a str) -> Self {
+            Self {
+                source_content,
+                pairs: source_content.char_indices().peekable(),
+                item_start: 0,
+                item_is_code: false,
+                code_triple_backtick_suffix_end: None,
+            }
+        }
+    }
+
+    /// Peek, then conditional take & drop - only if the peeked value matches the given pattern.
+    ///
+    /// Return NOT an iterated value, but bool whether it took & dropped a value, or not.
+    macro_rules! peek_and_drop {
+        ($iter_mut:expr, $pat:pat) => {{
+            if let $pat = $iter_mut.peek() {
+                $iter_mut.next();
+                true
+            } else {
+                false
+            }
+        }};
+    }
+    impl<'a> Iterator for ReadmeBlocksIter<'a> {
+        type Item = crate::private::ReadmeBlock<'a>;
+
+        fn next(&mut self) -> Option<crate::private::ReadmeBlock<'a>> {
+            while let Some((byte_idx, c)) = self.pairs.next() {
+                if c != '\n' {
+                    continue;
+                } else {
+                    if self.item_is_code && self.code_triple_backtick_suffix_end == None {
+                        self.code_triple_backtick_suffix_end = Some(byte_idx)
+                    }
+                }
+
+                if peek_and_drop!(self.pairs, Some((_, '`')))
+                    && peek_and_drop!(self.pairs, Some((_, '`')))
+                    && peek_and_drop!(self.pairs, Some((_, '`')))
+                {
+                    // Handle immediate end of file - with no trailing new line
+                    let next = self.pairs.peek();
+                    let next_block_start = if let Some(&(idx, _)) = next {
+                        idx
+                    } else {
+                        self.source_content.len()
+                    };
+
+                    let result = if self.item_is_code {
+                        let code_triple_backtick_suffix_end =
+                            self.code_triple_backtick_suffix_end.unwrap_or_else(|| {
+                                panic!(
+                                    "Internal error: code_triple_backtick_suffix_end should be set."
+                                );
+                            });
+
+                        crate::private::ReadmeBlock::Code(crate::private::CodeBlock {
+                            triple_backtick_suffix: &self.source_content
+                                [self.item_start..code_triple_backtick_suffix_end],
+
+                            code: &self.source_content
+                                [code_triple_backtick_suffix_end..next_block_start],
+                        })
+                    } else {
+                        crate::private::ReadmeBlock::Text(
+                            &self.source_content[self.item_start..next_block_start],
+                        )
+                    };
+                    self.item_is_code = !self.item_is_code;
+                    self.item_start = next_block_start;
+                    self.code_triple_backtick_suffix_end = None;
+                    return Some(result);
+                }
+            }
+            if self.item_is_code {
+                panic!(
+                    "Last code block is not enclosed with three backticks. It started at UTF-8 \n
+                    zero-based byte index {}. The rest of the input was: {}",
+                    self.item_start,
+                    &self.source_content[self.item_start..]
+                );
+            } else {
+                return if self.item_start < self.source_content.len() {
+                    Some(crate::private::ReadmeBlock::Text(
+                        &self.source_content[self.item_start..],
+                    ))
+                } else {
+                    None
+                };
+            }
+        }
     }
 
     #[derive(Debug)]
@@ -669,7 +677,10 @@ pub(crate) mod private {
 }
 
 mod trait_impls {
-    use crate::{misc::{SealedTrait, SealedTraitParam}, public};
+    use crate::{
+        misc::{SealedTrait, SealedTraitParam},
+        public,
+    };
     use proc_macro2::Span;
 
     impl<'a> SealedTrait for crate::private::config::Preamble<'a> {
@@ -736,7 +747,7 @@ mod trait_impls {
         fn prefix_before_insert(&self) -> &str {
             &self.prefix_before_insert
         }
-        fn inserts(&self) -> Option<&impl crate::public::config::headers::Inserts> {
+        fn inserts(&self) -> Option<&dyn crate::public::config::headers::Inserts> {
             if let Some(inserts) = &self.inserts {
                 Some(inserts)
             } else {
@@ -765,10 +776,10 @@ mod trait_impls {
         fn file_path(&self) -> &str {
             &self.file_path
         }
-        fn preamble(&self) -> &impl crate::public::config::Preamble {
+        fn preamble(&self) -> &dyn crate::public::config::Preamble {
             &self.preamble
         }
-        fn ordinary_code_headers(&self) -> Option<&impl crate::public::config::Headers> {
+        fn ordinary_code_headers(&self) -> Option<&dyn crate::public::config::Headers> {
             if let Some(headers) = &self.ordinary_code_headers {
                 Some(headers)
             } else {
@@ -815,7 +826,7 @@ mod trait_impls {
         fn source_file_content(&self) -> &str {
             &self.source_file_content
         }
-        fn config(&self) -> &impl crate::public::Config {
+        fn config(&self) -> &dyn crate::public::Config {
             self.config
         }
         fn span(&self) -> &Span {
@@ -847,7 +858,7 @@ mod trait_impls {
                 Self::Code(_) => None,
             }
         }
-        fn is_code(&self) -> Option<&impl crate::public::CodeBlock> {
+        fn is_code(&self) -> Option<&dyn crate::public::CodeBlock> {
             match self {
                 Self::Code(b) => Some(b),
                 Self::Text(_) => None,
@@ -860,11 +871,19 @@ mod trait_impls {
         fn _seal(&self, _: &SealedTraitParam) {}
     }
     impl<'a> crate::public::Extracted for crate::private::Extracted<'a> {
-        fn preamble_text(&self) -> Option<&impl crate::public::ReadmeBlock> {
-            self.preamble_text.as_ref()
+        fn preamble_text(&self) -> Option<&dyn crate::public::ReadmeBlock> {
+            //self.preamble_text.as_ref()
+            match &self.preamble_text {
+                Some(preamble_text) => Some(preamble_text),
+                None => None,
+            }
         }
-        fn preamble_code(&self) -> Option<&impl crate::public::ReadmeBlock> {
-            self.preamble_code.as_ref()
+        fn preamble_code(&self) -> Option<&dyn crate::public::ReadmeBlock> {
+            //self.preamble_code.as_ref()
+            match &self.preamble_code {
+                Some(preamble_code) => Some(preamble_code),
+                None => None,
+            }
         }
         fn non_preamble_blocks(
             &mut self,
@@ -899,7 +918,10 @@ mod tests {
     fn string_literal_constructor() {
         let content = "ordinary literal";
         let literal = Literal::string(content);
-        assert_eq!(crate::public::string_literal_content(&literal).as_ref(), content);
+        assert_eq!(
+            crate::public::string_literal_content(&literal).as_ref(),
+            content
+        );
     }
 
     #[test]
@@ -909,7 +931,10 @@ mod tests {
         let enclosed = format!("\"{content}\"");
         let literal = Literal::from_str(&enclosed).unwrap();
 
-        assert_eq!(crate::public::string_literal_content(&literal).as_ref(), content);
+        assert_eq!(
+            crate::public::string_literal_content(&literal).as_ref(),
+            content
+        );
     }
 
     #[test]
@@ -919,7 +944,10 @@ mod tests {
         let enclosed = format!("r\"{content}\"");
         let literal = Literal::from_str(&enclosed).unwrap();
 
-        assert_eq!(crate::public::string_literal_content(&literal).as_ref(), content);
+        assert_eq!(
+            crate::public::string_literal_content(&literal).as_ref(),
+            content
+        );
     }
 
     #[test]
@@ -929,7 +957,10 @@ mod tests {
         let enclosed = format!("r#\"{content}\"#");
         let literal = Literal::from_str(&enclosed).unwrap();
 
-        assert_eq!(crate::public::string_literal_content(&literal).as_ref(), content);
+        assert_eq!(
+            crate::public::string_literal_content(&literal).as_ref(),
+            content
+        );
     }
 
     #[test]
@@ -939,14 +970,19 @@ mod tests {
         let enclosed = format!("r##\"{content}\"##");
         let literal = Literal::from_str(&enclosed).unwrap();
 
-        assert_eq!(crate::public::string_literal_content(&literal).as_ref(), content);
+        assert_eq!(
+            crate::public::string_literal_content(&literal).as_ref(),
+            content
+        );
     }
 
     #[test]
     fn load_file_() {
         let literal = Literal::string("tests/file_1.txt");
-        let file_content =
-            crate::public::load_file(crate::public::string_literal_content(&literal), &literal.span());
+        let file_content = crate::public::load_file(
+            crate::public::string_literal_content(&literal),
+            &literal.span(),
+        );
         assert_eq!(file_content, "Hi from file_1.txt");
     }
 }
