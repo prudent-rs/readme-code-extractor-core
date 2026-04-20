@@ -708,7 +708,6 @@ pub fn config_and_span(config_content_and_span: &ConfigContentAndSpan) -> Config
 
 #[doc(hidden)]
 pub fn load_readme(config_and_span: &ConfigAndSpan) -> impl public::Loaded {
-    //@TODO file_relative_path !==== config_content_literal!!!
     private::Loaded {
         source_file_content: load_file(&config_and_span.config.file_path, config_and_span.span),
         config: &config_and_span.config,
