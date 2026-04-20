@@ -110,11 +110,13 @@ pub mod public {
     pub trait Config: crate::misc::SealedTrait + Debug {
         fn file_path(&self) -> &str;
 
+        fn prefix_before_preamble(&self) -> &str;
         fn preamble(&self) -> &dyn config::Preamble;
 
         fn ordinary_code_headers(&self) -> Option<&dyn config::Headers>;
-
         fn ordinary_code_suffix(&self) -> &str;
+
+        fn final_suffix(&self) -> &str;
     }
     // ----
 
@@ -462,11 +464,12 @@ pub(crate) mod private {
             #[serde(default)]
             pub struct Inserts<'a> {
                 /// A list of strings to be injected after the injected
-                /// [crate::private::config::Headers::prefix_before_insert], and before the beginning
-                /// of the existing code of each non-preamble code block. Each string from this list
-                /// is to be used exactly once, one per each non-preamble code block. The number of
-                /// strings in this list has to be the same as the number of non-preamble code
-                /// blocks.
+                /// [crate::private::config::Headers::prefix_before_insert], and before the
+                /// beginning of the existing code of each non-preamble code block.
+                ///
+                /// Each string from this list is to be used exactly once, one per each non-preamble
+                /// code block. The number of strings in this list has to be the same as the number
+                /// of non-preamble code blocks.
                 ///
                 /// Example of useful inserts: Names of test functions (or parts of such names) to
                 /// generate, one per each non-preamble code block.
@@ -500,7 +503,9 @@ pub(crate) mod private {
     pub struct Config<'a> {
         /// **Relative** path (relative to the directory of Rust source file that invoked the chain
         /// of macros). Defaults to "README.md".
-        pub(crate) file_path: String,
+        pub(crate) file_path: &'a str,
+
+        pub prefix_before_preamble: &'a str,
 
         #[serde(borrow)]
         pub(crate) preamble: config::Preamble<'a>,
@@ -511,7 +516,9 @@ pub(crate) mod private {
         /// Suffix to be appended at the end of any non-preamble code block.
         ///
         /// Example of useful inserts for generating test functions: `}`.
-        pub(crate) ordinary_code_suffix: String,
+        pub(crate) ordinary_code_suffix: &'a str,
+
+        pub final_suffix: &'a str
     }
     // -----
 
@@ -758,18 +765,24 @@ mod trait_impls {
     impl<'a> Default for crate::private::Config<'a> {
         fn default() -> Self {
             Self {
-                file_path: "README.md".to_owned(),
-
+                file_path: "README.md",
+                
+                prefix_before_preamble: "",
                 preamble: crate::private::config::Preamble::NoPreamble,
 
                 ordinary_code_headers: None,
-                ordinary_code_suffix: "".to_owned(),
+                ordinary_code_suffix: "",
+
+                final_suffix: ""
             }
         }
     }
     impl<'a> crate::public::Config for crate::private::Config<'a> {
         fn file_path(&self) -> &str {
-            &self.file_path
+            self.file_path
+        }
+        fn prefix_before_preamble(&self) -> &str {
+            self.prefix_before_preamble
         }
         fn preamble(&self) -> &dyn crate::public::config::Preamble {
             &self.preamble
@@ -782,7 +795,10 @@ mod trait_impls {
             }
         }
         fn ordinary_code_suffix(&self) -> &str {
-            &self.ordinary_code_suffix
+            self.ordinary_code_suffix
+        }
+        fn final_suffix(&self) -> &str {
+            self.final_suffix
         }
     }
     //-----
