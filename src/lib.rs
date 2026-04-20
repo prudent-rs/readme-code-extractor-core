@@ -390,14 +390,32 @@ pub mod public {
 
     #[doc(hidden)]
     pub fn extract<'a>(load: &'a impl crate::public::Loaded) -> impl crate::public::Extracted {
-        let mut all_blocks = crate::private::ReadmeBlocksIter::new(load.source_file_content());
+        let mut all_blocks =
+            crate::private::ReadmeBlocksIter::new(load.source_file_content()).peekable();
 
-        let preamble_text = if !load.config().preamble().is_no_preamble() {
-            todo!()
+        let (preamble_text, preamble_code) = if load.config().preamble().is_no_preamble() {
+            (None, None)
         } else {
-            None
+            let preamble_text = if let Some(block) = all_blocks.peek() {
+                if let crate::private::ReadmeBlock::Text(_) = block {
+                    all_blocks.next()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let preamble_code = if let Some(block) = all_blocks.peek() {
+                if let crate::private::ReadmeBlock::Code(_) = block {
+                    all_blocks.next()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            (preamble_text, preamble_code)
         };
-        let preamble_code = todo!();
 
         crate::private::Extracted {
             preamble_text,
@@ -555,11 +573,13 @@ pub(crate) mod private {
         Code(CodeBlock<'a>),
     }
 
-    /// Parse a README.md-like input. It's an iterator over [private::ReadmeBlock].
+    /// Parse a README.md-like input. It's an iterator over [ReadmeBlock].
     ///
-    /// We have used a function that called [core::iter::from_fn] and returned a similar iterator. But
-    /// that over-complicated the generic signature of [private::Extracted] to have an `impl
-    /// Iterator<Item = ...>` bound. That mad its `impl` verbose.
+    /// We have used a function that called [core::iter::from_fn] and returned a similar iterator.
+    /// But that over-complicated the generic signature of [Extracted] to have an `impl
+    /// Iterator<Item = ...>` bound. That caused [Extracted]
+    /// - to have too verbose `impl`, and
+    /// - not to be `&dyn`-compatible.
     #[derive(Debug)]
     pub(crate) struct ReadmeBlocksIter<'a> {
         source_content: &'a str,
@@ -579,6 +599,7 @@ pub(crate) mod private {
             }
         }
     }
+    pub(crate) type ReadmeBlocksIterPeekable<'a> = Peekable<ReadmeBlocksIter<'a>>;
 
     /// Peek, then conditional take & drop - only if the peeked value matches the given pattern.
     ///
@@ -665,17 +686,17 @@ pub(crate) mod private {
 
     #[derive(Debug)]
     pub struct Extracted<'a> {
-        /// [None] if [crate::public::config::Preamble::is_no_preamble]. But it may be [None] even
+        /// [None] if [crate::public::config::Preamble::is_no_preamble]. But, it may be [None] even
         /// for configurations where preamble is configured. For example: early end of input, or no
         /// text block before the first code block.
         pub preamble_text: Option<ReadmeBlock<'a>>,
 
-        /// [None] if [crate::public::config::Preamble::is_no_preamble]. But it may be [None] even
+        /// [None] if [crate::public::config::Preamble::is_no_preamble]. But, it may be [None] even
         /// for configurations where preamble is configured. For example: early end of input, or no
         /// text block before the first code block.
         pub preamble_code: Option<ReadmeBlock<'a>>,
 
-        pub non_preamble_blocks: ReadmeBlocksIter<'a>,
+        pub non_preamble_blocks: ReadmeBlocksIterPeekable<'a>,
     }
 }
 
