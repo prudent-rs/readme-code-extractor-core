@@ -48,10 +48,11 @@ const _S1: &str = /*json*/
     {"a": "b", "c": [1, 2, 3], "d": 0.333}
 "#;
 
+/// Assert that a given trait is dyn-compatible.
 macro_rules! assert_dyn_compatible {
     ($trait:path) => {
         const _: () = {
-            fn f(_: &dyn $trait) {}
+            fn _f(_: &dyn $trait) {}
         };
     };
 }
@@ -70,6 +71,7 @@ pub mod public {
             #[allow(private_interfaces)]
             fn _seal(&self, _: &TraitParam);
         }
+        assert_dyn_compatible!(Trait);
 
         /// Intentionally NOT public.
         #[allow(dead_code)]
@@ -94,6 +96,7 @@ pub mod public {
             /// [Preamble::is_copy_verbatim] was `true`.
             fn is_items_with_prefix(&self) -> Option<&str>;
         }
+        assert_dyn_compatible!(Preamble);
 
         pub mod headers {
             pub trait Inserts: crate::public::sealed::Trait {
@@ -110,12 +113,14 @@ pub mod public {
 
                 fn after_insert(&self) -> &str;
             }
+            assert_dyn_compatible!(Inserts);
         }
 
         pub trait Headers: crate::public::sealed::Trait {
             fn prefix_before_insert(&self) -> &str;
             fn inserts(&self) -> Option<&dyn headers::Inserts>;
         }
+        assert_dyn_compatible!(Headers);
     }
 
     pub trait Config: crate::public::sealed::Trait + Debug {
@@ -129,32 +134,38 @@ pub mod public {
 
         fn final_suffix(&self) -> &str;
     }
+    assert_dyn_compatible!(Config);
     // ----
 
     pub trait ConfigContentAndSpan: crate::public::sealed::Trait + Debug {
         fn config_content(&self) -> &str;
         fn span(&self) -> &Span;
     }
+    assert_dyn_compatible!(ConfigContentAndSpan);
     pub trait ConfigAndSpan: crate::public::sealed::Trait + Debug {
         fn config(&self) -> &dyn Config;
         fn span(&self) -> &Span;
     }
+    assert_dyn_compatible!(ConfigAndSpan);
 
     pub trait Loaded: crate::public::sealed::Trait + Debug {
         fn source_file_content(&self) -> &str;
         fn config(&self) -> &dyn Config;
         fn span(&self) -> &Span;
     }
+    assert_dyn_compatible!(Loaded);
 
     pub trait CodeBlock: crate::public::sealed::Trait + Debug {
         fn triple_backtick_suffix(&self) -> &str;
         fn code(&self) -> &str;
     }
+    assert_dyn_compatible!(CodeBlock);
 
     pub trait ReadmeBlock: crate::public::sealed::Trait + Debug {
         fn is_text(&self) -> Option<&str>;
         fn is_code(&self) -> Option<&dyn CodeBlock>;
     }
+    assert_dyn_compatible!(ReadmeBlock);
 
     /// Parse a README.md-like input. It's an iterator over [ReadmeBlock].
     ///
