@@ -48,9 +48,19 @@ const _S1: &str = /*json*/
     {"a": "b", "c": [1, 2, 3], "d": 0.333}
 "#;
 
+macro_rules! assert_dyn_compatible {
+    ($trait:path) => {
+        const _: () = {
+            fn f(_: &dyn $trait) {}
+        };
+    };
+}
+
 /// Internal/Only for prudent-rs/readme-code-extractor. SemVer-exempt!
 pub mod public {
     use alloc::fmt::Debug;
+    use core::iter::Peekable;
+    use core::str::CharIndices;
     use proc_macro2::{Literal, Span};
 
     pub mod sealed {
@@ -146,12 +156,119 @@ pub mod public {
         fn is_code(&self) -> Option<&dyn CodeBlock>;
     }
 
-    /*pub trait BlocksIteratorHolder {
-        /// Like [Iterator::next].
-        fn iter_next(&mut self) -> Option<impl ReadmeBlock>;
-    }*/
+    /// Parse a README.md-like input. It's an iterator over [ReadmeBlock].
+    ///
+    /// We have used a function that called [core::iter::from_fn] and returned a similar iterator.
+    /// But that over-complicated the generic signature of [Extracted] to have an `impl
+    /// Iterator<Item = ...>` bound. That caused [Extracted]
+    /// - to have too verbose `impl`, and
+    /// - not to be `&dyn`-compatible.
+    #[derive(Debug)]
+    pub struct ReadmeBlocksIter<'a> {
+        source_content: &'a str,
+        pairs: Peekable<CharIndices<'a>>,
+        item_start: usize,
+        item_is_code: bool,
+        code_triple_backtick_suffix_end: Option<usize>,
+    }
+    impl<'a> ReadmeBlocksIter<'a> {
+        pub(crate) fn new(source_content: &'a str) -> Self {
+            Self {
+                source_content,
+                pairs: source_content.char_indices().peekable(),
+                item_start: 0,
+                item_is_code: false,
+                code_triple_backtick_suffix_end: None,
+            }
+        }
+    }
+    pub type ReadmeBlocksIterPeekable<'a> = Peekable<ReadmeBlocksIter<'a>>;
 
-    pub trait Extracted: crate::public::sealed::Trait + Debug {
+    /// .peek(), then conditional .next() & drop - only if the peeked value matches the given
+    /// pattern.
+    ///
+    /// Return NOT an iterated value, but bool whether it took & dropped a value, or not.
+    macro_rules! peek_and_drop {
+        ($iter_mut:expr, $pat:pat) => {{
+            if let $pat = $iter_mut.peek() {
+                $iter_mut.next();
+                true
+            } else {
+                false
+            }
+        }};
+    }
+    impl<'a> Iterator for ReadmeBlocksIter<'a> {
+        type Item = crate::private::ReadmeBlock<'a>;
+
+        fn next(&mut self) -> Option<crate::private::ReadmeBlock<'a>> {
+            while let Some((byte_idx, c)) = self.pairs.next() {
+                if c != '\n' {
+                    continue;
+                } else {
+                    if self.item_is_code && self.code_triple_backtick_suffix_end == None {
+                        self.code_triple_backtick_suffix_end = Some(byte_idx)
+                    }
+                }
+
+                if peek_and_drop!(self.pairs, Some((_, '`')))
+                    && peek_and_drop!(self.pairs, Some((_, '`')))
+                    && peek_and_drop!(self.pairs, Some((_, '`')))
+                {
+                    // Handle immediate end of file - with no trailing new line
+                    let next = self.pairs.peek();
+                    let next_block_start = if let Some(&(idx, _)) = next {
+                        idx
+                    } else {
+                        self.source_content.len()
+                    };
+
+                    let result = if self.item_is_code {
+                        let code_triple_backtick_suffix_end =
+                            self.code_triple_backtick_suffix_end.unwrap_or_else(|| {
+                                panic!(
+                                    "Internal error: code_triple_backtick_suffix_end should be set."
+                                );
+                            });
+
+                        crate::private::ReadmeBlock::Code(crate::private::CodeBlock {
+                            triple_backtick_suffix: &self.source_content
+                                [self.item_start..code_triple_backtick_suffix_end],
+
+                            code: &self.source_content
+                                [code_triple_backtick_suffix_end..next_block_start],
+                        })
+                    } else {
+                        crate::private::ReadmeBlock::Text(
+                            &self.source_content[self.item_start..next_block_start],
+                        )
+                    };
+                    self.item_is_code = !self.item_is_code;
+                    self.item_start = next_block_start;
+                    self.code_triple_backtick_suffix_end = None;
+                    return Some(result);
+                }
+            }
+            if self.item_is_code {
+                panic!(
+                    "Last code block is not enclosed with three backticks. It started at UTF-8 \n
+                    zero-based byte index {}. The rest of the input was: {}",
+                    self.item_start,
+                    &self.source_content[self.item_start..]
+                );
+            } else {
+                return if self.item_start < self.source_content.len() {
+                    Some(crate::private::ReadmeBlock::Text(
+                        &self.source_content[self.item_start..],
+                    ))
+                } else {
+                    None
+                };
+            }
+        }
+    }
+
+    pub trait Extracted<'a>: crate::public::sealed::Trait + Debug {
         /// Content of the first text block, if any, but only if we do expect a preamble, that is,
         /// if [crate::public::config::Preamble::is_no_preamble] returns `false`.
         ///
@@ -166,9 +283,9 @@ pub mod public {
         /// [ReadmeBlock::is_code] must return [Some].
         fn preamble_code(&self) -> Option<&dyn ReadmeBlock>;
 
-        // @TODO see if we need/can change this to return ReadmeBlocksIterPeekable
-        fn non_preamble_blocks(&mut self) -> &mut dyn Iterator<Item = impl ReadmeBlock>;
+        fn non_preamble_blocks(&mut self) -> &mut ReadmeBlocksIterPeekable<'a>;
     }
+    assert_dyn_compatible!(Extracted);
     // ------
 
     #[doc(hidden)]
@@ -388,9 +505,9 @@ pub mod public {
     }
 
     #[doc(hidden)]
-    pub fn extract<'a>(load: &'a impl crate::public::Loaded) -> impl crate::public::Extracted {
+    pub fn extract<'a>(load: &'a impl crate::public::Loaded) -> impl crate::public::Extracted<'a> {
         let mut all_blocks =
-            crate::private::ReadmeBlocksIter::new(load.source_file_content()).peekable();
+            crate::public::ReadmeBlocksIter::new(load.source_file_content()).peekable();
 
         let (preamble_text, preamble_code) = if load.config().preamble().is_no_preamble() {
             (None, None)
@@ -434,8 +551,6 @@ pub mod public {
 /// fails with a compile error if used outside of docs.rs.
 pub(crate) mod private {
     use alloc::string::String;
-    use core::iter::Peekable;
-    use core::str::CharIndices;
     use proc_macro2::Span;
     use serde::{Deserialize, Serialize};
 
@@ -571,118 +686,6 @@ pub(crate) mod private {
         Code(CodeBlock<'a>),
     }
 
-    /// Parse a README.md-like input. It's an iterator over [ReadmeBlock].
-    ///
-    /// We have used a function that called [core::iter::from_fn] and returned a similar iterator.
-    /// But that over-complicated the generic signature of [Extracted] to have an `impl
-    /// Iterator<Item = ...>` bound. That caused [Extracted]
-    /// - to have too verbose `impl`, and
-    /// - not to be `&dyn`-compatible.
-    #[derive(Debug)]
-    pub(crate) struct ReadmeBlocksIter<'a> {
-        source_content: &'a str,
-        pairs: Peekable<CharIndices<'a>>,
-        item_start: usize,
-        item_is_code: bool,
-        code_triple_backtick_suffix_end: Option<usize>,
-    }
-    impl<'a> ReadmeBlocksIter<'a> {
-        pub(crate) fn new(source_content: &'a str) -> Self {
-            Self {
-                source_content,
-                pairs: source_content.char_indices().peekable(),
-                item_start: 0,
-                item_is_code: false,
-                code_triple_backtick_suffix_end: None,
-            }
-        }
-    }
-    pub(crate) type ReadmeBlocksIterPeekable<'a> = Peekable<ReadmeBlocksIter<'a>>;
-
-    /// .peek(), then conditional .next() & drop - only if the peeked value matches the given
-    /// pattern.
-    ///
-    /// Return NOT an iterated value, but bool whether it took & dropped a value, or not.
-    macro_rules! peek_and_drop {
-        ($iter_mut:expr, $pat:pat) => {{
-            if let $pat = $iter_mut.peek() {
-                $iter_mut.next();
-                true
-            } else {
-                false
-            }
-        }};
-    }
-    impl<'a> Iterator for ReadmeBlocksIter<'a> {
-        type Item = crate::private::ReadmeBlock<'a>;
-
-        fn next(&mut self) -> Option<crate::private::ReadmeBlock<'a>> {
-            while let Some((byte_idx, c)) = self.pairs.next() {
-                if c != '\n' {
-                    continue;
-                } else {
-                    if self.item_is_code && self.code_triple_backtick_suffix_end == None {
-                        self.code_triple_backtick_suffix_end = Some(byte_idx)
-                    }
-                }
-
-                if peek_and_drop!(self.pairs, Some((_, '`')))
-                    && peek_and_drop!(self.pairs, Some((_, '`')))
-                    && peek_and_drop!(self.pairs, Some((_, '`')))
-                {
-                    // Handle immediate end of file - with no trailing new line
-                    let next = self.pairs.peek();
-                    let next_block_start = if let Some(&(idx, _)) = next {
-                        idx
-                    } else {
-                        self.source_content.len()
-                    };
-
-                    let result = if self.item_is_code {
-                        let code_triple_backtick_suffix_end =
-                            self.code_triple_backtick_suffix_end.unwrap_or_else(|| {
-                                panic!(
-                                    "Internal error: code_triple_backtick_suffix_end should be set."
-                                );
-                            });
-
-                        crate::private::ReadmeBlock::Code(crate::private::CodeBlock {
-                            triple_backtick_suffix: &self.source_content
-                                [self.item_start..code_triple_backtick_suffix_end],
-
-                            code: &self.source_content
-                                [code_triple_backtick_suffix_end..next_block_start],
-                        })
-                    } else {
-                        crate::private::ReadmeBlock::Text(
-                            &self.source_content[self.item_start..next_block_start],
-                        )
-                    };
-                    self.item_is_code = !self.item_is_code;
-                    self.item_start = next_block_start;
-                    self.code_triple_backtick_suffix_end = None;
-                    return Some(result);
-                }
-            }
-            if self.item_is_code {
-                panic!(
-                    "Last code block is not enclosed with three backticks. It started at UTF-8 \n
-                    zero-based byte index {}. The rest of the input was: {}",
-                    self.item_start,
-                    &self.source_content[self.item_start..]
-                );
-            } else {
-                return if self.item_start < self.source_content.len() {
-                    Some(crate::private::ReadmeBlock::Text(
-                        &self.source_content[self.item_start..],
-                    ))
-                } else {
-                    None
-                };
-            }
-        }
-    }
-
     #[derive(Debug)]
     pub struct Extracted<'a> {
         /// [None] if [crate::public::config::Preamble::is_no_preamble]. But, it may be [None] even
@@ -695,7 +698,7 @@ pub(crate) mod private {
         /// text block before the first code block.
         pub preamble_code: Option<ReadmeBlock<'a>>,
 
-        pub non_preamble_blocks: ReadmeBlocksIterPeekable<'a>,
+        pub non_preamble_blocks: crate::public::ReadmeBlocksIterPeekable<'a>,
     }
 }
 
@@ -902,7 +905,7 @@ mod trait_impls {
         #[allow(private_interfaces)]
         fn _seal(&self, _: &TraitParam) {}
     }
-    impl<'a> crate::public::Extracted for crate::private::Extracted<'a> {
+    impl<'a> crate::public::Extracted<'a> for crate::private::Extracted<'a> {
         fn preamble_text(&self) -> Option<&dyn crate::public::ReadmeBlock> {
             //self.preamble_text.as_ref()
             match &self.preamble_text {
@@ -911,15 +914,13 @@ mod trait_impls {
             }
         }
         fn preamble_code(&self) -> Option<&dyn crate::public::ReadmeBlock> {
-            //self.preamble_code.as_ref()
             match &self.preamble_code {
                 Some(preamble_code) => Some(preamble_code),
                 None => None,
             }
         }
-        fn non_preamble_blocks(
-            &mut self,
-        ) -> &mut dyn Iterator<Item = impl crate::public::ReadmeBlock> {
+
+        fn non_preamble_blocks(&mut self) -> &mut crate::public::ReadmeBlocksIterPeekable<'a> {
             &mut self.non_preamble_blocks
         }
     }
