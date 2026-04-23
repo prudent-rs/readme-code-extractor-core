@@ -326,29 +326,50 @@ pub mod public {
 
         #[test]
         fn simplest_one() {
-            let mut iter = ReadmeBlocksIter::new(
+            let iter = ReadmeBlocksIter::new(
                 "01 text\n\
                 02 text",
             );
-            //if true { return;}
+
             let v = iter.collect::<Vec<_>>();
             assert_eq!(v.len(), 1);
         }
 
         #[test]
         fn simplest_two() {
-            let mut iter = ReadmeBlocksIter::new(
+            let iter = ReadmeBlocksIter::new(
                 "01 text\n\
                 ```\n\
                 const _: &str = \"03_code\";\n\
                 ```",
             );
-            //if true { return;}
+
             let v = iter.collect::<Vec<_>>();
             assert_eq!(v.len(), 2);
             assert!(matches!(v[0], ReadmeBlock::Text(_)));
             assert!(matches!(v[1], ReadmeBlock::Code(_)));
             assert_eq!(v[1].code().unwrap().code().len(), 28);
+        }
+
+        #[test]
+        fn simplest_three() {
+            let iter = ReadmeBlocksIter::new(
+                "01 text\n\
+                ```\n\
+                const _: () = {};\n\
+                ```\n\
+                text again",
+            );
+
+            let v = iter.collect::<Vec<_>>();
+            assert_eq!(v.len(), 3);
+            assert!(matches!(v[0], ReadmeBlock::Text(_)));
+
+            assert!(matches!(v[1], ReadmeBlock::Code(_)));
+            assert_eq!(v[1].code().unwrap().code().len(), 19);
+
+            assert!(matches!(v[2], ReadmeBlock::Text(_)));
+            assert_eq!(v[2].text().unwrap().len(), 10);
         }
     }
 
