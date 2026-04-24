@@ -245,22 +245,20 @@ pub mod public {
         type Item = crate::private::ReadmeBlock<'a>;
 
         fn next(&mut self) -> Option<crate::private::ReadmeBlock<'a>> {
-            while let Some((byte_idx, c)) = self.pairs.next() {
+            while let Some(&(byte_idx, c)) = self.pairs.peek() {
                 assert_eq!(
                     self.code_triple_backtick_suffix_end == None,
                     !self.item_is_code
                 );
                 if self.item_is_code && self.code_triple_backtick_suffix_end == Some(None) {
                     if c != '\n' {
+                        self.pairs.next();
                         continue;
                     }
                     self.code_triple_backtick_suffix_end = Some(Some(byte_idx))
                 }
 
-                // Skip leading white space
-                while peek_and_drop!(self.pairs, Some((_, ' ' | '\t'))) {}
-
-                // Skip leading white space and new lines
+                // Skip leading white space and new lines. @TODO Skip TOML comments.
                 while peek_and_drop!(self.pairs, Some((_, ' ' | '\t' | '\n'))) {}
                 //if true {panic!("Before triple");}
 
@@ -311,13 +309,15 @@ pub mod public {
                         if self.item_is_code { Some(None) } else { None };
                     //panic!("Result: {result:?}, self: {self:?}");
                     return Some(result);
+                } else {
+                    self.pairs.next();
                 }
                 //panic!("AFTER the triple tick peek");
             }
             if self.item_is_code {
                 panic!(
-                    "The last code block is not enclosed with three backticks. It started at UTF-8 \
-                    \nzero-based byte index {}. The rest of the input was: {}",
+                    "The last code block is not enclosed with three backticks. It started at \n\
+                    UTF-8 byte index (zero-based) {}. The rest of the input was: {}",
                     self.item_start,
                     &self.source_content[self.item_start..]
                 );
@@ -393,6 +393,22 @@ pub mod public {
 
             assert!(matches!(v[2], ReadmeBlock::Text(_)));
             assert_eq!(v[2].text().unwrap().len(), 11);
+        }
+
+        #[test]
+        fn simplest_no_preamble_text() {
+            let iter = ReadmeBlocksIter::new(
+                "```\n\
+                 const _: &str = \"03_code\";\n\
+                 ```\n\
+                 text",
+            );
+
+            let v = iter.collect::<Vec<_>>();
+            assert_eq!(v.len(), 3);
+
+            assert!(matches!(v[1], ReadmeBlock::Code(_)));
+            assert_eq!(v[1].code().unwrap().code().len(), 28);
         }
     }
 
