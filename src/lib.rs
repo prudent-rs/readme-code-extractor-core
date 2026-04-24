@@ -245,17 +245,22 @@ pub mod public {
         type Item = crate::private::ReadmeBlock<'a>;
 
         fn next(&mut self) -> Option<crate::private::ReadmeBlock<'a>> {
-            while let Some(&(byte_idx, c)) = self.pairs.peek() {
+            'main: loop {
                 assert_eq!(
                     self.code_triple_backtick_suffix_end == None,
                     !self.item_is_code
                 );
                 if self.item_is_code && self.code_triple_backtick_suffix_end == Some(None) {
-                    if c != '\n' {
-                        self.pairs.next();
-                        continue;
+                    // Find end of the triple backtick suffix (if any): Skip until new line.
+                    while let Some(&(byte_idx, c)) = self.pairs.peek() {
+                        if c != '\n' {
+                            self.pairs.next();
+                            continue;
+                        }
+                        self.code_triple_backtick_suffix_end = Some(Some(byte_idx));
+                        continue 'main;
                     }
-                    self.code_triple_backtick_suffix_end = Some(Some(byte_idx))
+                    break; // end of input
                 }
 
                 // Skip leading white space and new lines. @TODO Skip TOML comments.
@@ -311,6 +316,9 @@ pub mod public {
                     return Some(result);
                 } else {
                     self.pairs.next();
+                    if self.pairs.peek().is_none() {
+                        break;
+                    }
                 }
                 //panic!("AFTER the triple tick peek");
             }
