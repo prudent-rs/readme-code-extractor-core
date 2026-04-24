@@ -322,7 +322,6 @@ pub mod public {
                         break;
                     }
                 }
-                //panic!("AFTER the triple tick peek");
             }
             if self.item_is_code() {
                 panic!(
