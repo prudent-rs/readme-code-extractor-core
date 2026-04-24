@@ -202,9 +202,6 @@ pub mod public {
         /// Zero-based index of the byte where the current item starts.
         item_start: usize,
 
-        /// Whether the current item is a code block (rather than a text block).
-        item_is_code: bool,
-
         /// Zero-based [usize] index of where the triple backtick suffix ends for the current block.
         ///
         /// [ReadmeBlocksIter::code_triple_backtick_suffix_end] is
@@ -225,9 +222,12 @@ pub mod public {
                 source_content,
                 pairs: source_content.char_indices().peekable(),
                 item_start: 0,
-                item_is_code: false,
                 code_triple_backtick_suffix_end: None,
             }
+        }
+        /// Whether the current item is a code block (rather than a text block).
+        pub(crate) fn item_is_code(&self) -> bool {
+            matches!(self.code_triple_backtick_suffix_end, Some(_))
         }
     }
     pub type ReadmeBlocksIterPeekable<'a> = Peekable<ReadmeBlocksIter<'a>>;
@@ -251,11 +251,7 @@ pub mod public {
 
         fn next(&mut self) -> Option<crate::private::ReadmeBlock<'a>> {
             'main: loop {
-                assert_eq!(
-                    self.code_triple_backtick_suffix_end == None,
-                    !self.item_is_code
-                );
-                if self.item_is_code && self.code_triple_backtick_suffix_end == Some(None) {
+                if self.code_triple_backtick_suffix_end == Some(None) {
                     // Find end of the triple backtick suffix (if any): Skip until new line.
                     while let Some(&(byte_idx, c)) = self.pairs.peek() {
                         if c != '\n' {
@@ -285,7 +281,7 @@ pub mod public {
                         self.source_content.len()
                     };
 
-                    let result = if self.item_is_code {
+                    let result = if self.item_is_code() {
                         let code_triple_backtick_suffix_end =
                             self.code_triple_backtick_suffix_end.unwrap_or_else(|| {
                                 panic!(
@@ -313,10 +309,12 @@ pub mod public {
                             &self.source_content[self.item_start..next_block_start - 3],
                         )
                     };
-                    self.item_is_code = !self.item_is_code;
                     self.item_start = next_block_start;
-                    self.code_triple_backtick_suffix_end =
-                        if self.item_is_code { Some(None) } else { None };
+                    self.code_triple_backtick_suffix_end = if self.item_is_code() {
+                        None
+                    } else {
+                        Some(None)
+                    };
                     //panic!("Result: {result:?}, self: {self:?}");
                     return Some(result);
                 } else {
@@ -327,7 +325,7 @@ pub mod public {
                 }
                 //panic!("AFTER the triple tick peek");
             }
-            if self.item_is_code {
+            if self.item_is_code() {
                 panic!(
                     "The last code block is not enclosed with three backticks. It started at \n\
                     UTF-8 byte index (zero-based) {}. The rest of the input was: {}",
