@@ -28,7 +28,7 @@ h = 1.0
 q = { y = 1. b = 2}
 "#]
 
-// The following HAS TO have the comment /*toml*/ and the following string opening quote r"
+// The following HAS TO have both the comment /*toml*/ and the following string opening quote r"
 // ON THE SAME LINE.
 //
 // Otherwise we don't get embedded highlighting with "Embedded Languages" for VS Code
@@ -253,10 +253,10 @@ pub mod public {
         fn next(&mut self) -> Option<crate::private::ReadmeBlock<'a>> {
             'main: loop {
                 if self.code_triple_backtick_suffix_end == Some(None) {
-                    // Find end of the triple backtick suffix (if any): Skip until new line.
+                    // Find end of the triple backtick suffix (if any).
                     while let Some((byte_idx, c)) = self.pairs.peek() {
                         if *c != '\n' {
-                            self.pairs.next();
+                            self.pairs.next(); // Skip until new line.
                             continue;
                         }
                         self.code_triple_backtick_suffix_end = Some(Some(*byte_idx));
@@ -267,18 +267,15 @@ pub mod public {
 
                 // Skip leading white space and new lines. @TODO Skip TOML comments.
                 while peek_and_drop!(self.pairs, Some((_, ' ' | '\t' | '\n'))) {}
-                //if true {panic!("Before triple");}
 
                 if peek_and_drop!(self.pairs, Some((_, '`')))
                     && peek_and_drop!(self.pairs, Some((_, '`')))
                     && peek_and_drop!(self.pairs, Some((_, '`')))
                 {
-                    //panic!("triple");
-                    // Handle immediate end of file - with no trailing new line
-                    let peek = self.pairs.peek();
-                    let next_block_start = if let Some((idx, _)) = peek {
+                    let next_block_start = if let Some((idx, _)) = self.pairs.peek() {
                         *idx
                     } else {
+                        // Handle immediate end of file - with no trailing new line
                         self.source_content.len()
                     };
 
@@ -287,14 +284,14 @@ pub mod public {
                             self.code_triple_backtick_suffix_end.unwrap_or_else(|| {
                                 panic!(
                                     "Internal error: code_triple_backtick_suffix_end should be \
-                                     Some(_), but it's None."
+                                     Some(Some(usize)), but it's None."
                                 );
                             });
                         let code_triple_backtick_suffix_end = code_triple_backtick_suffix_end
                             .unwrap_or_else(|| {
                                 panic!(
-                                    "Internal error: code_triple_backtick_suffix_end is Some(_), \
-                                     but it's Some(None). It should be Some(Some(_))."
+                                    "Internal error: code_triple_backtick_suffix_end is \
+                                     Some(None), but it should be Some(Some(usize))."
                                 );
                             });
 
@@ -310,13 +307,14 @@ pub mod public {
                             &self.source_content[self.item_start..next_block_start - 3],
                         )
                     };
+
                     self.item_start = next_block_start;
                     self.code_triple_backtick_suffix_end = if self.item_is_code() {
                         None
                     } else {
                         Some(None)
                     };
-                    //panic!("Result: {result:?}, self: {self:?}");
+
                     return Some(result);
                 } else {
                     self.pairs.next();
@@ -328,8 +326,8 @@ pub mod public {
             }
             if self.item_is_code() {
                 panic!(
-                    "The last code block is not enclosed with three backticks. It started at \n\
-                    UTF-8 byte index (zero-based) {}. The rest of the input was: {}",
+                    "The last code block is not enclosed with three backticks. It started at \
+                    UTF-8 byte index (indexed from zero) {}. The rest of the input was: {}",
                     self.item_start,
                     &self.source_content[self.item_start..]
                 );
