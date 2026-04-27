@@ -638,12 +638,16 @@ pub mod public {
     ) -> impl ConfigContentAndSpan {
         let config_file_path =
             crate::public::string_literal_content_from_string(config_file_path_literal.to_string());
+        
+        let span = config_file_path_literal.span();
+        let config_content = load_file(
+                &config_file_path, &span);
 
         crate::private::ConfigContentAndSpan {
             config_content: crate::public::string_literal_content_from_owned_string_slice(
-                config_file_path,
+                config_file_path,//@TODO
             ),
-            span: config_file_path_literal.span(),
+            span
         }
     }
 
