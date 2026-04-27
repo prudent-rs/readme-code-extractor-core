@@ -456,48 +456,33 @@ pub mod public {
     assert_dyn_compatible!(ReadmeExtracted);
     // ------
 
-    #[derive(Debug)]
-    enum OwnedStringSliceBacking {
-        OwnedString(alloc::string::String),
-        AnotherOwnedStringSlice(Box<OwnedStringSlice>),
-    }
-
     #[doc(hidden)]
     #[derive(Debug)]
     pub struct OwnedStringSlice {
-        s: OwnedStringSliceBacking,
+        s: String,
         start_incl: usize,
         end_excl: usize,
     }
     impl OwnedStringSlice {
         fn new_from_string(s: String, start_incl: usize, end_excl: usize) -> Self {
             Self {
-                s: OwnedStringSliceBacking::OwnedString(s),
+                s,
                 start_incl,
                 end_excl,
             }
         }
-        fn new_from_owned_string_slice(
-            s: OwnedStringSlice,
-            start_incl: usize,
-            end_excl: usize,
-        ) -> Self {
+        fn new_from_whole_string(s: String) -> Self {
+            let end_excl = s.len();
             Self {
-                s: OwnedStringSliceBacking::AnotherOwnedStringSlice(Box::new(s)),
-                start_incl,
+                s,
+                start_incl: 0,
                 end_excl,
             }
         }
     }
     impl AsRef<str> for OwnedStringSlice {
         fn as_ref(&self) -> &str {
-            match &self.s {
-                OwnedStringSliceBacking::OwnedString(s) => &s[self.start_incl..self.end_excl],
-                OwnedStringSliceBacking::AnotherOwnedStringSlice(ss) => {
-                    let s: &OwnedStringSlice = ss;
-                    &s.as_ref()[self.start_incl..self.end_excl]
-                }
-            }
+            &self.s[self.start_incl..self.end_excl]
         }
     }
 
@@ -526,17 +511,17 @@ pub mod public {
     /// `to_string()`.
     ///
     /// PANIC is UNLIKELY - it should be only due to an internal error in rustc and/or proc_macro2.
-    pub fn string_literal_content_from_string(enclosed_owned: String) -> OwnedStringSlice {
+    pub fn string_literal_content(enclosed_owned: String) -> OwnedStringSlice {
         let (start_incl, end_excl) = string_literal_start_end(enclosed_owned.as_ref());
         OwnedStringSlice::new_from_string(enclosed_owned, start_incl, end_excl)
     }
 
-    pub fn string_literal_content_from_owned_string_slice<'a>(
+    /*pub fn string_literal_content_from_owned_string_slice<'a>(
         enclosed_owned: OwnedStringSlice,
     ) -> OwnedStringSlice {
         let (start_incl, end_excl) = string_literal_start_end(enclosed_owned.as_ref());
         OwnedStringSlice::new_from_owned_string_slice(enclosed_owned, start_incl, end_excl)
-    }
+    }*/
 
     pub fn string_literal_start_end(enclosed: &str) -> (usize, usize) {
         if enclosed.len() < 2 {
@@ -625,7 +610,7 @@ pub mod public {
     #[doc(hidden)]
     pub fn config_content_and_span(config_content_literal: &Literal) -> impl ConfigContentAndSpan {
         crate::private::ConfigContentAndSpan {
-            config_content: crate::public::string_literal_content_from_string(
+            config_content: crate::public::string_literal_content(
                 config_content_literal.to_string(),
             ),
             span: config_content_literal.span(),
@@ -637,17 +622,15 @@ pub mod public {
         config_file_path_literal: &Literal,
     ) -> impl ConfigContentAndSpan {
         let config_file_path =
-            crate::public::string_literal_content_from_string(config_file_path_literal.to_string());
-        
+            crate::public::string_literal_content(config_file_path_literal.to_string());
+
         let span = config_file_path_literal.span();
-        let config_content = load_file(
-                &config_file_path, &span);
+        let config_content =
+            OwnedStringSlice::new_from_whole_string(load_file(&config_file_path, &span));
 
         crate::private::ConfigContentAndSpan {
-            config_content: crate::public::string_literal_content_from_owned_string_slice(
-                config_file_path,//@TODO
-            ),
-            span
+            config_content,
+            span,
         }
     }
 
