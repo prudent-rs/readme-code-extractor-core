@@ -3,6 +3,9 @@
 // Avoid std:: and use core:: or alloc::  as much as we can.
 extern crate alloc;
 
+use proc_macro2_diagnostics::Diagnostic;
+use proc_macro2_diagnostics::SpanDiagnosticExt as _;
+
 // On VS Code
 // - install https://github.com/ruschaaf/extended-embedded-languages
 // - and prefix the raw string with `/*toml*/ ` - see
@@ -63,6 +66,11 @@ pub mod public {
     use core::iter::Peekable;
     use core::str::CharIndices;
     use proc_macro2::{Literal, Span};
+
+    use proc_macro2_diagnostics::Diagnostic;
+    use proc_macro2_diagnostics::SpanDiagnosticExt as _;
+
+    pub type MacroResult<T> = Result<T, Diagnostic>;
 
     pub mod sealed {
         /// Intentionally NOT public.
@@ -159,6 +167,8 @@ pub mod public {
     assert_dyn_compatible!(ConfigAndSpan);
 
     pub trait ReadmeLoaded: crate::public::sealed::Trait + Debug {
+        // NOT necessary for data flow, but it makes error reporting easier.
+        fn span(&self) -> &Span;
         fn markdown_file_content(&self) -> &str;
         fn config(&self) -> &dyn Config;
         /// See [Config::markdown_file_local_path].
@@ -200,6 +210,8 @@ pub mod public {
     /// - not to be `&dyn`-compatible.
     #[derive(Debug)]
     pub struct ReadmeBlocksIter<'a> {
+        span: &'a Span,
+
         markdown_content: &'a str,
         pairs: Peekable<CharIndices<'a>>,
 
@@ -222,8 +234,9 @@ pub mod public {
     }
     impl<'a> ReadmeBlocksIter<'a> {
         /// We start parsing in Markdown/text mode.
-        pub(crate) fn new(markdown_content: &'a str) -> Self {
+        pub(crate) fn new(span: &'a Span, markdown_content: &'a str) -> Self {
             Self {
+                span,
                 markdown_content,
                 pairs: markdown_content.char_indices().peekable(),
                 item_start: 0,
@@ -252,9 +265,9 @@ pub mod public {
         }};
     }
     impl<'a> Iterator for ReadmeBlocksIter<'a> {
-        type Item = crate::private::ReadmeBlock<'a>;
+        type Item = MacroResult<crate::private::ReadmeBlock<'a>>;
 
-        fn next(&mut self) -> Option<crate::private::ReadmeBlock<'a>> {
+        fn next(&mut self) -> Option<MacroResult<crate::private::ReadmeBlock<'a>>> {
             'main: loop {
                 if self.code_triple_backtick_suffix_end == Some(None) {
                     // Find end of the triple backtick suffix (if any).
@@ -288,7 +301,7 @@ pub mod public {
                             self.code_triple_backtick_suffix_end.unwrap_or_else(|| {
                                 panic!(
                                     "Internal error: code_triple_backtick_suffix_end should be \
-                                     Some(Some(usize)), but it's None."
+                                        Some(Some(usize)), but it's None."
                                 );
                             });
                         let code_triple_backtick_suffix_end = code_triple_backtick_suffix_end
@@ -319,7 +332,7 @@ pub mod public {
                         Some(None)
                     };
 
-                    return Some(result);
+                    return Some(Ok(result));
                 } else {
                     self.pairs.next();
                     if self.pairs.peek().is_none() {
@@ -328,12 +341,12 @@ pub mod public {
                 }
             }
             if self.item_is_code() {
-                panic!(
+                return Some(Err(self.span.error(format!(
                     "The last code block is not enclosed with three backticks. It started at \
                     UTF-8 byte index (indexed from zero) {}. The rest of the input was: {}",
                     self.item_start,
                     &self.markdown_content[self.item_start..]
-                );
+                ))));
             } else {
                 return if self.item_start < self.markdown_content.len() {
                     let result = crate::private::ReadmeBlock::Text(
@@ -341,7 +354,7 @@ pub mod public {
                     );
                     self.item_start = self.markdown_content.len();
 
-                    Some(result)
+                    Some(Ok(result))
                 } else {
                     None
                 };
@@ -442,6 +455,9 @@ pub mod public {
     }
 
     pub trait ReadmeExtracted<'a>: crate::public::sealed::Trait + Debug {
+        // NOT necessary for data flow, but it makes error reporting easier.
+        fn span(&self) -> &Span;
+
         /// See [Config::markdown_file_local_path].
         fn markdown_file_local_path(&self) -> &str;
 
@@ -519,9 +535,16 @@ pub mod public {
     /// `to_string()`.
     ///
     /// PANIC is UNLIKELY - it should be only due to an internal error in rustc and/or proc_macro2.
-    pub fn string_literal_content(enclosed_owned: String) -> OwnedStringSlice {
-        let (start_incl, end_excl) = string_literal_start_end(enclosed_owned.as_ref());
-        OwnedStringSlice::new_from_string(enclosed_owned, start_incl, end_excl)
+    pub fn string_literal_content(
+        span: &Span,
+        enclosed_owned: String,
+    ) -> MacroResult<OwnedStringSlice> {
+        let (start_incl, end_excl) = string_literal_start_end(span, enclosed_owned.as_ref())?;
+        Ok(OwnedStringSlice::new_from_string(
+            enclosed_owned,
+            start_incl,
+            end_excl,
+        ))
     }
 
     /*pub fn string_literal_content_from_owned_string_slice<'a>(
@@ -531,34 +554,104 @@ pub mod public {
         OwnedStringSlice::new_from_owned_string_slice(enclosed_owned, start_incl, end_excl)
     }*/
 
-    pub fn string_literal_start_end(enclosed: &str) -> (usize, usize) {
-        if enclosed.len() < 2 {
-            panic!(
+    /// Use inside [string_literal_start_end] and similar.
+    macro_rules! some_or_err{
+        ( $span:expr, $option_expr:expr $(, $rest:tt)+ ) => {
+            match $option_expr {
+                Some(value) => value,
+                None => {
+                    return Err($span.clone().error(
+                        format!(
+                            $( $rest ),+
+                        )
+                    ));
+                }
+            }
+        };
+    }
+
+    /// Use inside [string_literal_start_end] and similar.
+    macro_rules! true_or_err{
+        ( $span:expr, $bool_expr:expr $(, $rest:tt)+ ) => {
+            some_or_err!(
+                $span,
+                if $bool_expr { Some(()) } else { None },
+                $( $rest ),+
+            )
+        };
+    }
+
+    /// Use inside [string_literal_start_end] and similar.
+    /*macro_rules! ok_or_err{
+        ( $span:expr, $result_expr:expr $(, $rest:tt)+ ) => {
+            match $result_expr {
+                Ok(value) => value,
+                Err(err) => {
+                    return Err($span.clone().error(
+                        format!(
+                            $( $rest ),+
+                        )
+                    ));
+                }
+            }
+        };
+    }*/
+
+    pub fn string_literal_start_end(span: &Span, enclosed: &str) -> MacroResult<(usize, usize)> {
+        /*if enclosed.len() < 2 {
+            return Err(span.clone().error(
+                format!(
                 "Expecting an enclosed string literal (at least two bytes), but received: {}",
                 enclosed
-            );
-        }
+            )));
+        }*/
+        true_or_err!(
+            span,
+            enclosed.len() < 2,
+            "Expecting an enclosed string literal (at least two bytes), but received: {}",
+            enclosed
+        );
+
         // ASCII is common for code scope-only configuration, so applying the initial size same as
         // number of bytes.
         //let mut chars = Vec::with_capacity(enclosed.len());
         //chars.extend(enclosed.chars());
         let mut chars = enclosed.chars();
-        let first = chars
-            .next()
-            .unwrap_or_else(|| panic!("Can't parse the first character of: {enclosed}"));
+        /*let first = match chars.next() {
+            Some(c) => c,
+            None => {
+                return Err(span.clone().error( format!("Can't parse the first character of: {enclosed}")));
+            }
+        };*/
+        let first = some_or_err! {
+            span,
+            chars.next(),
+            "Can't parse the first character of: {enclosed}"
+
+        };
 
         if first == '"' || first == 'r' {
             if first == '"' {
                 // ordinary "string literals"
-                let last = chars
-                    .next_back()
-                    .unwrap_or_else(|| panic!("Can't parse the last character of: {enclosed}"));
+                /*let last = chars
+                .next_back()
+                .unwrap_or_else(|| panic!("Can't parse the last character of: {enclosed}"));*/
+                let last = some_or_err!(
+                    span,
+                    chars.next_back(),
+                    "Can't parse the last character of: {enclosed}"
+                );
 
-                assert_eq!(
+                /*assert_eq!(
                     last, '"',
                     "Expecting the last character to be a closing quote '\"', but it's: '{last}'."
+                );*/
+                true_or_err!(
+                    span,
+                    last == '"',
+                    "Expecting the last character to be a closing quote '\"', but it's: '{last}'."
                 );
-                (1, enclosed.len() - 1)
+                Ok((1, enclosed.len() - 1))
             } else {
                 // raw string literals
                 let mut num_of_hashes = 0usize;
@@ -569,13 +662,14 @@ pub mod public {
                     } else if c == '"' {
                         break;
                     } else {
-                        panic!(
+                        return Err(span.clone().error(
                             "Expecting a raw string literal, but surprised by '{c}'. \
-                                Whole literal: {enclosed}"
-                        );
+                                Whole literal: {enclosed}",
+                        ));
                     }
                 }
                 for _ in 0..num_of_hashes {
+                    /*
                     if let Some(c) = chars.next_back() {
                         assert_eq!(
                             c, '#',
@@ -590,84 +684,123 @@ pub mod public {
                                 characters. Whole literal: {enclosed}"
                         );
                     }
+                    */
+                    let c = some_or_err!(
+                        span,
+                        chars.next_back(),
+                        "Expecting a raw string literal, but it seems not closed. \
+                                Expecting a hash character '#' near the end, but out of \
+                                characters. Whole literal: {enclosed}"
+                    );
+                    true_or_err!(
+                        span,
+                        c == '#',
+                        "Expecting a raw string literal, but it seems not \
+                            closed. Surprised by character '{c}' near the end. \
+                            Whole literal: {enclosed}"
+                    );
                 }
-                if let Some(c) = chars.next_back() {
+                /*if let Some(c) = chars.next_back() {
                     assert_eq!(
                         c, '"',
-                        "Expecting a raw string literal, but it seems not closed. \
+                        "Internal or unexpected error: Expecting a raw string literal, but it \
+                            seems not closed. \
                             Expecting a quote character '\"' near the end, but \
                             received '{c}' character instead. Whole literal: {enclosed}"
                     );
                 } else {
                     panic!(
-                        "Expecting a raw string literal, but it seems not closed. \
+                        "Expecting a raw string literal, but it \
+                            seems not closed. \
                             Expecting a quote character '\"' near the end, but out of \
                             characters. Whole literal: {enclosed}"
                     );
-                }
-                (2 + num_of_hashes, enclosed.len() - 1 - num_of_hashes)
+                }*/
+                let c = some_or_err!(
+                    span,
+                    chars.next_back(),
+                    "Expecting a raw string literal, but it \
+                            seems not closed. \
+                            Expecting a quote character '\"' near the end, but out of \
+                            characters. Whole literal: {enclosed}"
+                );
+                true_or_err!(
+                    span,
+                    c == '"',
+                    "Internal or unexpected error: Expecting a raw string literal, but it \
+                            seems not closed. \
+                            Expecting a quote character '\"' near the end, but \
+                            received '{c}' character instead. Whole literal: {enclosed}"
+                );
+
+                Ok((2 + num_of_hashes, enclosed.len() - 1 - num_of_hashes))
             }
         } else {
-            panic!(
-                "Expecting a string literal, which would be either \"...\", or r\"...\", \
+            /*panic!(
+                "Internal Error: Expecting a string literal, which would be either \"...\", or r\"...\", \
                     r#\"...\"#, r##\"...\"## (and so on). But received: {enclosed}"
-            )
+            )*/
+            Err(span.clone().error("Internal Error: Expecting a string literal, which would be either \"...\", or r\"...\", \
+                    r#\"...\"#, r##\"...\"## (and so on). But received: {enclosed}"
+            ))
         }
     }
 
     #[doc(hidden)]
-    pub fn config_content_and_span(config_content_literal: &Literal) -> impl ConfigContentAndSpan {
-        crate::private::ConfigContentAndSpan {
+    pub fn config_content_and_span(
+        config_content_literal: &Literal,
+    ) -> MacroResult<impl ConfigContentAndSpan> {
+        Ok(crate::private::ConfigContentAndSpan {
             config_content: crate::public::string_literal_content(
+                &config_content_literal.span(),
                 config_content_literal.to_string(),
-            ),
+            )?,
             span: config_content_literal.span(),
-        }
+        })
     }
 
     /// Return impl [ConfigContentAndSpan], and a path to the TOML config file.
     #[doc(hidden)]
     pub fn config_content_and_span_by_file(
         config_file_path_literal: &Literal,
-    ) -> (impl ConfigContentAndSpan, OwnedStringSlice) {
+    ) -> MacroResult<(impl ConfigContentAndSpan, OwnedStringSlice)> {
+        let span = &config_file_path_literal.span();
         let toml_config_file_path =
-            crate::public::string_literal_content(config_file_path_literal.to_string());
+            crate::public::string_literal_content(span, config_file_path_literal.to_string())?;
 
         let span = config_file_path_literal.span();
         //let (config_content, config_file_full_path) = load_file(&config_file_path, &span);
-        let config_content = load_file(&toml_config_file_path, &span);
+        let config_content = load_file(&span, &toml_config_file_path)?;
         let config_content = OwnedStringSlice::new_from_whole_string(config_content);
 
         //if true { todo!("use the full path to load to a const _: () - config_file_path: {}, config_file_full_path: {}", config_file_path.as_ref(), config_file_full_path.to_str().unwrap()); }
-        (
+        Ok((
             crate::private::ConfigContentAndSpan {
                 config_content,
                 span,
             },
             toml_config_file_path,
-        )
+        ))
     }
 
     #[doc(hidden)]
     pub fn config_and_span(
         config_content_and_span: &impl ConfigContentAndSpan,
-    ) -> impl ConfigAndSpan {
+    ) -> MacroResult<impl ConfigAndSpan> {
         let config =
             toml::from_str::<crate::private::Config>(config_content_and_span.config_content());
 
         match config {
-            Ok(config) => crate::private::ConfigAndSpan {
+            Ok(config) => Ok(crate::private::ConfigAndSpan {
                 config,
                 span: &config_content_and_span.span(),
-            },
-            Err(e) => {
-                panic!(
-                    "Couldn't parse given literal's content as an expected TOML config. Content: \
+            }),
+            Err(e) => Err(config_content_and_span.span().clone().error(format!(
+                "Couldn't parse given literal's content as an expected TOML config. Content: \
                     {}\n{:?}",
-                    config_content_and_span.config_content(),
-                    e
-                )
-            }
+                config_content_and_span.config_content(),
+                e
+            ))),
         }
     }
 
@@ -680,26 +813,26 @@ pub mod public {
     /// (That is, [proc_macro2::Span::local_file] must return [Some].)
     ///
     /// Therefore, this function is tested as a part of `prudent-rs/readme_code_extractor_proc`.
-    fn load_file(file_relative_path: impl AsRef<str>, span: &Span) -> String {
+    fn load_file(span: &Span, file_relative_path: impl AsRef<str>) -> MacroResult<String> {
         let file_relative_path = file_relative_path.as_ref();
 
         let file_full_path = {
-            let invoker_file_path = span.local_file().unwrap_or_else(|| {
-                panic!(
+            let invoker_file_path = some_or_err! {
+                span,
+                span.local_file(),
                     "Rust source file that invoked readme_code_extractor_lib::load_file(...) \
                     (through one of readme_code_extractor's macros like all, all_by_file, nth, \
                     nth_by_file) for file with relative path {file_relative_path} \
                     should have a known location."
-                )
-            });
-            let invoker_parent_dir = invoker_file_path.parent().unwrap_or_else(|| {
-                panic!(
-                    "Rust source file that invoked readme_code_extractor_lib::load_file(...) \
+            };
+            let invoker_parent_dir = some_or_err!(
+                span,
+                invoker_file_path.parent(),
+                "Rust source file that invoked readme_code_extractor_lib::load_file(...) \
                     (through one of readme_code_extractor's macros like all, all_by_file, nth, \
                     nth_by_file) for file with relative path {file_relative_path} \
                     may exist, but we can't get its parent directory."
-                )
-            });
+            );
             invoker_parent_dir.join(file_relative_path)
         };
 
@@ -711,45 +844,58 @@ pub mod public {
                 .unwrap_or("(PATH UNKNOWN OR NOT UTF-8)");
             panic!("Expecting a file {file_path}, but opening it failed: {e:?}",)
         });
-        content
+        Ok(content)
     }
 
     #[doc(hidden)]
-    pub fn readme_load(config_and_span: &impl ConfigAndSpan) -> impl ReadmeLoaded {
+    pub fn readme_load(config_and_span: &impl ConfigAndSpan) -> MacroResult<impl ReadmeLoaded> {
         let markdown_file_local_path = config_and_span.config().markdown_file_local_path();
-        let markdown_file_content = load_file(markdown_file_local_path, config_and_span.span());
-        crate::private::ReadmeLoaded {
+        let span = config_and_span.span();
+        let markdown_file_content = load_file(span, markdown_file_local_path)?;
+        Ok(crate::private::ReadmeLoaded {
+            span,
             markdown_file_local_path,
             markdown_file_content,
             config: config_and_span.config(),
-        }
+        })
     }
 
     #[doc(hidden)]
     pub fn readme_extract<'a>(
         load: &'a impl crate::public::ReadmeLoaded,
-    ) -> impl crate::public::ReadmeExtracted<'a> {
+    ) -> MacroResult<impl crate::public::ReadmeExtracted<'a>> {
         let mut all_blocks =
-            crate::public::ReadmeBlocksIter::new(load.markdown_file_content()).peekable();
+            crate::public::ReadmeBlocksIter::new(load.span(), load.markdown_file_content())
+                .peekable();
 
         let (preamble_text, preamble_code) = if load.config().preamble().is_none() {
             (None, None)
         } else {
             let preamble_text = if let Some(block) = all_blocks.peek() {
-                if let crate::private::ReadmeBlock::Text(_) = block {
-                    all_blocks.next()
+                if matches!(block, &Ok(crate::private::ReadmeBlock::Text(_)) | &Err(_)) {
+                    Some(all_blocks.next().unwrap()?)
                 } else {
                     None
                 }
+                /*if let crate::private::ReadmeBlock::Text(_) = block {
+                    all_blocks.next()
+                } else {
+                    None
+                }*/
             } else {
                 None
             };
             let preamble_code = if let Some(block) = all_blocks.peek() {
-                if let crate::private::ReadmeBlock::Code(_) = block {
-                    all_blocks.next()
+                if matches!(block, &Ok(crate::private::ReadmeBlock::Code(_)) | &Err(_)) {
+                    Some(all_blocks.next().unwrap()?)
                 } else {
                     None
                 }
+                /*if let crate::private::ReadmeBlock::Code(_) = block {
+                    all_blocks.next()
+                } else {
+                    None
+                }*/
             } else {
                 None
             };
@@ -757,12 +903,13 @@ pub mod public {
         };
 
         //let source_file_full_path = load.source_file_full_path();
-        crate::private::ReadmeExtracted {
+        Ok(crate::private::ReadmeExtracted {
+            span: load.span(),
             markdown_file_local_path: load.markdown_file_local_path(),
             preamble_text,
             preamble_code,
             non_preamble_blocks: all_blocks,
-        }
+        })
     }
 }
 
@@ -902,6 +1049,7 @@ pub(crate) mod private {
 
     #[derive(Debug)]
     pub struct ReadmeLoaded<'a> {
+        pub span: &'a Span,
         pub markdown_file_content: String,
         pub markdown_file_local_path: &'a str,
         pub config: &'a dyn crate::public::Config,
@@ -921,6 +1069,8 @@ pub(crate) mod private {
 
     #[derive(Debug)]
     pub struct ReadmeExtracted<'a> {
+        pub span: &'a Span,
+
         pub markdown_file_local_path: &'a str,
 
         /// [None] if [crate::public::config::Preamble::is_no_preamble]. But, it may be [None] even
@@ -1100,6 +1250,9 @@ mod trait_impls {
         fn _seal(&self, _: &TraitParam) {}
     }
     impl<'a> crate::public::ReadmeLoaded for crate::private::ReadmeLoaded<'a> {
+        fn span(&self) -> &Span {
+            self.span
+        }
         fn markdown_file_local_path(&self) -> &str {
             self.markdown_file_local_path
         }
@@ -1160,6 +1313,9 @@ mod trait_impls {
         fn _seal(&self, _: &TraitParam) {}
     }
     impl<'a> crate::public::ReadmeExtracted<'a> for crate::private::ReadmeExtracted<'a> {
+        fn span(&self) -> &Span {
+            self.span
+        }
         fn markdown_file_local_path(&self) -> &str {
             self.markdown_file_local_path
         }

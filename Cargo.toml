@@ -22,3 +22,4 @@ homepage = "https://github.com/prudent-rs/readme-code-extractor"
 proc-macro2 = {version="1.0.60", features=["span-locations"] }
 serde = { version = "1.0.113", features = ["derive"] }
 toml = { version = "1.0.0", default-features = false, features = ["parse", "serde"] }
+proc-macro2-diagnostics = "0.10.1"
