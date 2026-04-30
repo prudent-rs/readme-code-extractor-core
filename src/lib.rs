@@ -112,15 +112,11 @@ pub mod public {
 
         pub mod headers {
             pub trait Inserts: crate::public::sealed::Trait {
-                // - NOT returning an [Iterator], because [Iterator]
-                //   - can NOT be `Box`-ed as Box<&dyn Iterator<Item = &'a str>>`, because Iterator
-                //     trait is NOT dyn compatible.
-                //   - would require us to export a custom Iterator type.
-                // - NOT returning `impl Iterator<Item = &'a str>`, because then this trait would
-                //   NOT be dyn-compatible. (That doesn't matter with the current design, but it
-                //   would matter if we use &dyn or Box<dyn ...>.)
-                // - A slice is more flexible/useable than an [Iterator]. And it knows its length.
-                //fn inserts<'a>(&'a self) -> &'a [&'a str];
+                /// Inserts - if any, then it's exactly one insert per code block.
+                ///
+                /// - NOT returning `impl Iterator<Item = &'a str>`, because then this trait would
+                ///   NOT be dyn-compatible.
+                /// - A slice is more flexible/useable than an [Iterator]. And it knows its length.
                 fn inserts<'a>(&self) -> &[&str];
 
                 fn after_insert(&self) -> &str;
@@ -560,13 +556,6 @@ pub mod public {
         ))
     }
 
-    /*pub fn string_literal_content_from_owned_string_slice<'a>(
-        enclosed_owned: OwnedStringSlice,
-    ) -> OwnedStringSlice {
-        let (start_incl, end_excl) = string_literal_start_end(enclosed_owned.as_ref());
-        OwnedStringSlice::new_from_owned_string_slice(enclosed_owned, start_incl, end_excl)
-    }*/
-
     /// Use inside [string_literal_start_end] and similar.
     macro_rules! some_or_err{
         ( $span:expr, $option_expr:expr, $( $rest:tt)+ ) => {
@@ -618,13 +607,6 @@ pub mod public {
     }
 
     pub fn string_literal_start_end(span: &Span, enclosed: &str) -> MacroResult<(usize, usize)> {
-        /*if enclosed.len() < 2 {
-            return Err(span.clone().error(
-                format!(
-                "Expecting an enclosed string literal (at least two bytes), but received: {}",
-                enclosed
-            )));
-        }*/
         true_or_err!(
             span,
             enclosed.len() > 2,
@@ -632,17 +614,7 @@ pub mod public {
             enclosed
         );
 
-        // ASCII is common for code scope-only configuration, so applying the initial size same as
-        // number of bytes.
-        //let mut chars = Vec::with_capacity(enclosed.len());
-        //chars.extend(enclosed.chars());
         let mut chars = enclosed.chars();
-        /*let first = match chars.next() {
-            Some(c) => c,
-            None => {
-                return Err(span.clone().error( format!("Can't parse the first character of: {enclosed}")));
-            }
-        };*/
         let first = some_or_err! {
             span,
             chars.next(),
@@ -653,19 +625,12 @@ pub mod public {
         if first == '"' || first == 'r' {
             if first == '"' {
                 // ordinary "string literals"
-                /*let last = chars
-                .next_back()
-                .unwrap_or_else(|| panic!("Can't parse the last character of: {enclosed}"));*/
                 let last = some_or_err!(
                     span,
                     chars.next_back(),
                     "Can't parse the last character of: {enclosed}"
                 );
 
-                /*assert_eq!(
-                    last, '"',
-                    "Expecting the last character to be a closing quote '\"', but it's: '{last}'."
-                );*/
                 true_or_err!(
                     span,
                     last == '"',
@@ -689,22 +654,6 @@ pub mod public {
                     }
                 }
                 for _ in 0..num_of_hashes {
-                    /*
-                    if let Some(c) = chars.next_back() {
-                        assert_eq!(
-                            c, '#',
-                            "Expecting a raw string literal, but it seems not \
-                                closed. Surprised by character '{c}' near the end. \
-                                Whole literal: {enclosed}"
-                        );
-                    } else {
-                        panic!(
-                            "Expecting a raw string literal, but it seems not closed. \
-                                Expecting a hash character '#' near the end, but out of \
-                                characters. Whole literal: {enclosed}"
-                        );
-                    }
-                    */
                     let c = some_or_err!(
                         span,
                         chars.next_back(),
@@ -720,22 +669,6 @@ pub mod public {
                             Whole literal: {enclosed}"
                     );
                 }
-                /*if let Some(c) = chars.next_back() {
-                    assert_eq!(
-                        c, '"',
-                        "Internal or unexpected error: Expecting a raw string literal, but it \
-                            seems not closed. \
-                            Expecting a quote character '\"' near the end, but \
-                            received '{c}' character instead. Whole literal: {enclosed}"
-                    );
-                } else {
-                    panic!(
-                        "Expecting a raw string literal, but it \
-                            seems not closed. \
-                            Expecting a quote character '\"' near the end, but out of \
-                            characters. Whole literal: {enclosed}"
-                    );
-                }*/
                 let c = some_or_err!(
                     span,
                     chars.next_back(),
@@ -756,10 +689,6 @@ pub mod public {
                 Ok((2 + num_of_hashes, enclosed.len() - 1 - num_of_hashes))
             }
         } else {
-            /*panic!(
-                "Internal Error: Expecting a string literal, which would be either \"...\", or r\"...\", \
-                    r#\"...\"#, r##\"...\"## (and so on). But received: {enclosed}"
-            )*/
             Err(span.clone().error("Internal Error: Expecting a string literal, which would be either \"...\", or r\"...\", \
                     r#\"...\"#, r##\"...\"## (and so on). But received: {enclosed}"
             ))
@@ -785,11 +714,9 @@ pub mod public {
             crate::public::string_literal_content(config_file_path_literal)?;
 
         let span = config_file_path_literal.span();
-        //let (config_content, config_file_full_path) = load_file(&config_file_path, &span);
         let config_content = load_file(&span, &toml_config_file_path)?;
         let config_content = OwnedStringSlice::new_from_whole_string(config_content);
 
-        //if true { todo!("use the full path to load to a const _: () - config_file_path: {}, config_file_full_path: {}", config_file_path.as_ref(), config_file_full_path.to_str().unwrap()); }
         Ok((
             crate::private::ConfigContentAndSpan {
                 config_content,
@@ -854,7 +781,6 @@ pub mod public {
 
         // Error handling is modelling https://doc.rust-lang.org/nightly/src/core/result.rs.html
         // > `fn unwrap_failed`, which invokes `panic!("{msg}: {error:?}");`
-        //let content = std::fs::read_to_string(&file_full_path).unwrap_or_else(|e| {
         let content = ok_or_err!(
             span,
             std::fs::read_to_string(&file_full_path),
@@ -863,12 +789,6 @@ pub mod public {
                 .to_str()
                 .unwrap_or("(PATH UNKNOWN OR NOT UTF-8)")
         );
-        /*
-            let file_path = file_full_path
-                .to_str()
-                .unwrap_or("(PATH UNKNOWN OR NOT UTF-8)");
-            return Err(span.error( format!("Expecting a file {file_path}, but opening it failed: {e:?}")));
-        });*/
         Ok(content)
     }
 
@@ -902,11 +822,6 @@ pub mod public {
                 } else {
                     None
                 }
-                /*if let crate::private::ReadmeBlock::Text(_) = block {
-                    all_blocks.next()
-                } else {
-                    None
-                }*/
             } else {
                 None
             };
@@ -916,11 +831,6 @@ pub mod public {
                 } else {
                     None
                 }
-                /*if let crate::private::ReadmeBlock::Code(_) = block {
-                    all_blocks.next()
-                } else {
-                    None
-                }*/
             } else {
                 None
             };
@@ -1161,7 +1071,6 @@ mod trait_impls {
         }
     }
     impl<'a> crate::public::config::headers::Inserts for crate::private::config::headers::Inserts<'a> {
-        //fn inserts<'s>(&'s self) -> &'s[&'s str] {
         fn inserts(&self) -> &[&str] {
             &self.inserts
         }
@@ -1284,11 +1193,6 @@ mod trait_impls {
         fn markdown_file_content(&self) -> &str {
             &self.markdown_file_content
         }
-        /*fn source_file_full_path(&self) -> &str {
-            &self.markdown_file_local_path.to_str().unwrap_or_else(|| {
-                panic!("Internal error: source_file_full_path should be in UTF-8.");
-            })
-        }*/
         fn config(&self) -> &dyn crate::public::Config {
             self.config
         }
@@ -1345,7 +1249,6 @@ mod trait_impls {
             self.markdown_file_local_path
         }
         fn preamble_text(&self) -> Option<&dyn crate::public::ReadmeBlock> {
-            //self.preamble_text.as_ref()
             match &self.preamble_text {
                 Some(preamble_text) => Some(preamble_text),
                 None => None,
