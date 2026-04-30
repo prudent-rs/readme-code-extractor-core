@@ -91,15 +91,19 @@ pub mod public {
         }
     }
 
-    // @TODO consider making it a sealed trait
-    pub trait MacroResultDeepExt<T> {
+    pub trait MacroResultDeepExt<T>: sealed::Trait {
         // @TODO if implemented in proc_macro2_diagnostics, make it accept MultiSpan.
+        /// Add the given [Span], and transform to [MacroResult].
         fn spanned(self, span: Span) -> MacroResult<T>;
     }
     impl<T> MacroResultDeepExt<T> for MacroDeepResult<T> {
         fn spanned(self, span: Span) -> MacroResult<T> {
             self.map_err(|deep_err| deep_err.spanned(span))
         }
+    }
+    impl<T> sealed::Trait for MacroDeepResult<T> {
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &sealed::TraitParam) {}
     }
 
     pub mod sealed {
@@ -110,13 +114,6 @@ pub mod public {
             fn _seal(&self, _: &TraitParam);
         }
         assert_dyn_compatible!(Trait);
-
-        /// Intentionally NOT public.
-        #[allow(dead_code)]
-        pub(crate) struct TraitImpl {}
-        impl Trait for TraitImpl {
-            fn _seal(&self, _: &TraitParam) {}
-        }
     }
 
     /// Marker-only, no-ops.
