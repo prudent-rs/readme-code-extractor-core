@@ -111,22 +111,22 @@ pub mod public {
         assert_dyn_compatible!(Preamble);
 
         pub mod headers {
-            pub trait Inserts: crate::public::sealed::Trait {
-                /// Inserts - if any, then it's exactly one insert per code block.
+            pub trait Marks: crate::public::sealed::Trait {
+                /// Unique marks - if any, then it's exactly one mark per code block.
                 ///
                 /// - NOT returning `impl Iterator<Item = &'a str>`, because then this trait would
                 ///   NOT be dyn-compatible.
                 /// - A slice is more flexible/useable than an [Iterator]. And it knows its length.
-                fn inserts<'a>(&self) -> &[&str];
+                fn marks(&self) -> &[&str];
 
-                fn after_insert(&self) -> &str;
+                fn after_mark(&self) -> &str;
             }
-            assert_dyn_compatible!(Inserts);
+            assert_dyn_compatible!(Marks);
         }
 
         pub trait Headers: crate::public::sealed::Trait {
-            fn prefix_before_insert(&self) -> &str;
-            fn inserts(&self) -> Option<&dyn headers::Inserts>;
+            fn prefix_before_mark(&self) -> &str;
+            fn marks(&self) -> Option<&dyn headers::Marks>;
         }
         assert_dyn_compatible!(Headers);
     }
@@ -705,6 +705,8 @@ pub mod public {
         })
     }
 
+    /// Read configuration from a (TOML) file, its path is given as `config_file_path_literal`.
+    ///
     /// Return impl [ConfigContentAndSpan], and a path to the TOML config file.
     #[doc(hidden)]
     pub fn config_content_and_span_by_file(
@@ -902,24 +904,24 @@ pub(crate) mod private {
 
             #[derive(Serialize, Deserialize, Debug)]
             #[serde(default)]
-            pub struct Inserts<'a> {
+            pub struct Marks<'a> {
                 /// A list of strings to be injected after the injected
-                /// [crate::private::config::Headers::prefix_before_insert], and before the
+                /// [crate::private::config::Headers::prefix_before_mark], and before the
                 /// beginning of the existing code of each non-preamble code block.
                 ///
                 /// Each string from this list is to be used exactly once, one per each non-preamble
                 /// code block. The number of strings in this list has to be the same as the number
                 /// of non-preamble code blocks.
                 ///
-                /// Example of useful inserts: Names of test functions (or parts of such names) to
+                /// Example of useful marks: Names of test functions (or parts of such names) to
                 /// generate, one per each non-preamble code block.
-                pub inserts: Vec<&'a str>,
+                pub marks: Vec<&'a str>,
 
                 /// Content to be injected at the beginning of each non-preamble code block, but
-                /// AFTER an insert.
+                /// AFTER a mark.
                 ///
-                /// Example of useful inserts for generating test functions: `() {`.
-                pub after_insert: &'a str,
+                /// Example of useful content of ter a mark when generating test functions: `() {`.
+                pub after_mark: &'a str,
             }
         }
 
@@ -927,13 +929,13 @@ pub(crate) mod private {
         #[serde(default)]
         pub struct Headers<'a> {
             /// Prefix to be injected at the beginning of any non-preamble code block, even before
-            /// an insert (if any).
+            /// an mark (if any).
             ///
             /// Example of useful prefix: `#[test] fn test_` for test functions to generate.
-            pub prefix_before_insert: &'a str,
+            pub prefix_before_mark: &'a str,
 
             #[serde(borrow)]
-            pub inserts: Option<headers::Inserts<'a>>,
+            pub marks: Option<headers::Marks<'a>>,
         }
     }
 
@@ -957,7 +959,7 @@ pub(crate) mod private {
 
         /// Suffix to be appended at the end of any non-preamble code block.
         ///
-        /// Example of useful inserts for generating test functions: `}`.
+        /// Example of a useful suffix for generating test functions: `}`.
         pub ordinary_code_suffix: &'a str,
 
         pub final_suffix: &'a str,
@@ -1058,24 +1060,24 @@ mod trait_impls {
         }
     }
 
-    impl<'a> Trait for crate::private::config::headers::Inserts<'a> {
+    impl<'a> Trait for crate::private::config::headers::Marks<'a> {
         #[allow(private_interfaces)]
         fn _seal(&self, _: &TraitParam) {}
     }
-    impl<'a> Default for crate::private::config::headers::Inserts<'a> {
+    impl<'a> Default for crate::private::config::headers::Marks<'a> {
         fn default() -> Self {
             Self {
-                inserts: vec![],
-                after_insert: "",
+                marks: vec![],
+                after_mark: "",
             }
         }
     }
-    impl<'a> crate::public::config::headers::Inserts for crate::private::config::headers::Inserts<'a> {
-        fn inserts(&self) -> &[&str] {
-            &self.inserts
+    impl<'a> crate::public::config::headers::Marks for crate::private::config::headers::Marks<'a> {
+        fn marks(&self) -> &[&str] {
+            &self.marks
         }
-        fn after_insert(&self) -> &str {
-            &self.after_insert
+        fn after_mark(&self) -> &str {
+            &self.after_mark
         }
     }
 
@@ -1089,19 +1091,19 @@ mod trait_impls {
                 unreachable!("If this dies, then we don't need default_code_headers")
             }
             Self {
-                prefix_before_insert: "",
-                inserts: None,
+                prefix_before_mark: "",
+                marks: None,
             }
         }
     }
 
     impl<'a> crate::public::config::Headers for crate::private::config::Headers<'a> {
-        fn prefix_before_insert(&self) -> &str {
-            &self.prefix_before_insert
+        fn prefix_before_mark(&self) -> &str {
+            &self.prefix_before_mark
         }
-        fn inserts(&self) -> Option<&dyn crate::public::config::headers::Inserts> {
-            if let Some(inserts) = &self.inserts {
-                Some(inserts)
+        fn marks(&self) -> Option<&dyn crate::public::config::headers::Marks> {
+            if let Some(marks) = &self.marks {
+                Some(marks)
             } else {
                 None
             }
