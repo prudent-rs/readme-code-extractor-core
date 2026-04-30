@@ -63,6 +63,7 @@ pub mod public {
     use core::iter::Peekable;
     use core::str::CharIndices;
     use proc_macro2::{Literal, Span};
+    use std::collections::HashSet;
 
     use proc_macro2_diagnostics::Diagnostic;
     use proc_macro2_diagnostics::SpanDiagnosticExt as _;
@@ -735,18 +736,35 @@ pub mod public {
         let config =
             toml::from_str::<crate::private::Config>(config_content_and_span.config_content());
 
-        match config {
-            Ok(config) => Ok(crate::private::ConfigAndSpan {
-                config,
-                span: &config_content_and_span.span(),
-            }),
-            Err(e) => Err(config_content_and_span.span().clone().error(format!(
-                "Couldn't parse given literal's content as an expected TOML config. Content: \
+        let config = ok_or_err!(
+            config_content_and_span.span(),
+            config,
+            "Couldn't parse given literal's content as an expected TOML config. Content: \
                     {}\n{:?}",
-                config_content_and_span.config_content(),
-                e
-            ))),
+            config_content_and_span.config_content()
+        );
+
+        if let Some(headers) = config.ordinary_code_headers()
+            && let Some(tags) = headers.tags()
+        {
+            let tags = tags.tags();
+            if tags.len() > 0 {
+                let mut set = HashSet::<&str>::with_capacity(tags.len());
+                set.extend(tags.iter());
+                true_or_err!(
+                    config_content_and_span.span(),
+                    set.len() == tags.len(),
+                    "Since tags were given, they must be unique! However, there are {} tags, but only {} unique subsets of them.",
+                    tags.len(),
+                    set.len()
+                )
+            }
         }
+
+        Ok(crate::private::ConfigAndSpan {
+            config,
+            span: &config_content_and_span.span(),
+        })
     }
 
     /// Restriction: We support only files that are in UTF-8 (the content is in UTF-8).
