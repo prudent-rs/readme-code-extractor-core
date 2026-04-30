@@ -364,32 +364,39 @@ pub mod public {
     #[cfg(test)]
     mod readme_blocks_iter_test {
         use crate::private::ReadmeBlock;
-        use crate::public::{ReadmeBlock as _, ReadmeBlocksIter};
+        use crate::public::{MacroResult, ReadmeBlock as _, ReadmeBlocksIter};
+        use core::str::FromStr;
+        use proc_macro2::Literal;
 
         #[test]
-        fn simplest_one() {
+        fn simplest_one() -> MacroResult<()> {
+            let span = Literal::from_str("0").unwrap().span();
             let iter = ReadmeBlocksIter::new(
+                &span,
                 "01 text\n\
                 02 text",
             );
 
-            let v = iter.collect::<Vec<_>>();
+            let v = iter.collect::<MacroResult<Vec<_>>>()?;
             assert_eq!(v.len(), 1);
 
             assert!(matches!(v[0], ReadmeBlock::Text(_)));
             assert_eq!(v[0].text().unwrap().len(), 15);
+            Ok(())
         }
 
         #[test]
-        fn simplest_two() {
+        fn simplest_two() -> MacroResult<()> {
+            let span = Literal::from_str("0").unwrap().span();
             let iter = ReadmeBlocksIter::new(
+                &span,
                 "01 text\n\
                 ```\n\
                 const _: &str = \"03_code\";\n\
                 ```",
             );
 
-            let v = iter.collect::<Vec<_>>();
+            let v = iter.collect::<MacroResult<Vec<_>>>()?;
             assert_eq!(v.len(), 2);
 
             assert!(matches!(v[0], ReadmeBlock::Text(_)));
@@ -397,11 +404,14 @@ pub mod public {
 
             assert!(matches!(v[1], ReadmeBlock::Code(_)));
             assert_eq!(v[1].code().unwrap().code().len(), 28);
+            Ok(())
         }
 
         #[test]
-        fn simplest_three() {
+        fn simplest_three() -> MacroResult<()> {
+            let span = Literal::from_str("0").unwrap().span();
             let iter = ReadmeBlocksIter::new(
+                &span,
                 "01 text\n\
                 ```\n\
                 const _: () = {};\n\
@@ -409,7 +419,7 @@ pub mod public {
                 text again",
             );
 
-            let v = iter.collect::<Vec<_>>();
+            let v = iter.collect::<MacroResult<Vec<_>>>()?;
             assert_eq!(v.len(), 3);
 
             assert!(matches!(v[0], ReadmeBlock::Text(_)));
@@ -420,37 +430,44 @@ pub mod public {
 
             assert!(matches!(v[2], ReadmeBlock::Text(_)));
             assert_eq!(v[2].text().unwrap().len(), 11);
+            Ok(())
         }
 
         #[test]
-        fn simplest_empty_preamble_text() {
+        fn simplest_empty_preamble_text() -> MacroResult<()> {
+            let span = Literal::from_str("0").unwrap().span();
             let iter = ReadmeBlocksIter::new(
+                &span,
                 "```\n\
                  const _: &str = \"02_code\";\n\
                  ```\n\
                  text",
             );
 
-            let v = iter.collect::<Vec<_>>();
+            let v = iter.collect::<MacroResult<Vec<_>>>()?;
             assert_eq!(v.len(), 3);
 
             assert!(matches!(v[1], ReadmeBlock::Code(_)));
             assert_eq!(v[1].code().unwrap().code().len(), 28);
+            Ok(())
         }
 
         #[test]
-        fn simplest_code_block_is_last() {
+        fn simplest_code_block_is_last() -> MacroResult<()> {
+            let span = Literal::from_str("0").unwrap().span();
             let iter = ReadmeBlocksIter::new(
+                &span,
                 "```\n\
                  const _: &str = \"02_code\";\n\
                  ```",
             );
 
-            let v = iter.collect::<Vec<_>>();
+            let v = iter.collect::<MacroResult<Vec<_>>>()?;
             assert_eq!(v.len(), 2);
 
             assert!(matches!(v[1], ReadmeBlock::Code(_)));
             assert_eq!(v[1].code().unwrap().code().len(), 28);
+            Ok(())
         }
     }
 
@@ -535,11 +552,10 @@ pub mod public {
     /// `to_string()`.
     ///
     /// PANIC is UNLIKELY - it should be only due to an internal error in rustc and/or proc_macro2.
-    pub fn string_literal_content(
-        span: &Span,
-        enclosed_owned: String,
-    ) -> MacroResult<OwnedStringSlice> {
-        let (start_incl, end_excl) = string_literal_start_end(span, enclosed_owned.as_ref())?;
+    pub fn string_literal_content(enclosed_owned: &Literal) -> MacroResult<OwnedStringSlice> {
+        let span = enclosed_owned.span();
+        let enclosed_owned = enclosed_owned.to_string();
+        let (start_incl, end_excl) = string_literal_start_end(&span, &enclosed_owned)?;
         Ok(OwnedStringSlice::new_from_string(
             enclosed_owned,
             start_incl,
@@ -607,7 +623,7 @@ pub mod public {
         }*/
         true_or_err!(
             span,
-            enclosed.len() < 2,
+            enclosed.len() > 2,
             "Expecting an enclosed string literal (at least two bytes), but received: {}",
             enclosed
         );
@@ -751,10 +767,7 @@ pub mod public {
         config_content_literal: &Literal,
     ) -> MacroResult<impl ConfigContentAndSpan> {
         Ok(crate::private::ConfigContentAndSpan {
-            config_content: crate::public::string_literal_content(
-                &config_content_literal.span(),
-                config_content_literal.to_string(),
-            )?,
+            config_content: crate::public::string_literal_content(config_content_literal)?,
             span: config_content_literal.span(),
         })
     }
@@ -766,7 +779,7 @@ pub mod public {
     ) -> MacroResult<(impl ConfigContentAndSpan, OwnedStringSlice)> {
         let span = &config_file_path_literal.span();
         let toml_config_file_path =
-            crate::public::string_literal_content(span, config_file_path_literal.to_string())?;
+            crate::public::string_literal_content(config_file_path_literal)?;
 
         let span = config_file_path_literal.span();
         //let (config_content, config_file_full_path) = load_file(&config_file_path, &span);
@@ -1365,7 +1378,9 @@ mod tests {
         let content = "ordinary literal";
         let literal = Literal::string(content);
         assert_eq!(
-            crate::public::string_literal_content(&literal).as_ref(),
+            crate::public::string_literal_content(&literal)
+                .unwrap()
+                .as_ref(),
             content
         );
     }
@@ -1378,7 +1393,9 @@ mod tests {
         let literal = Literal::from_str(&enclosed).unwrap();
 
         assert_eq!(
-            crate::public::string_literal_content(&literal).as_ref(),
+            crate::public::string_literal_content(&literal)
+                .unwrap()
+                .as_ref(),
             content
         );
     }
@@ -1391,7 +1408,9 @@ mod tests {
         let literal = Literal::from_str(&enclosed).unwrap();
 
         assert_eq!(
-            crate::public::string_literal_content(&literal).as_ref(),
+            crate::public::string_literal_content(&literal)
+                .unwrap()
+                .as_ref(),
             content
         );
     }
@@ -1404,7 +1423,9 @@ mod tests {
         let literal = Literal::from_str(&enclosed).unwrap();
 
         assert_eq!(
-            crate::public::string_literal_content(&literal).as_ref(),
+            crate::public::string_literal_content(&literal)
+                .unwrap()
+                .as_ref(),
             content
         );
     }
@@ -1417,7 +1438,9 @@ mod tests {
         let literal = Literal::from_str(&enclosed).unwrap();
 
         assert_eq!(
-            crate::public::string_literal_content(&literal).as_ref(),
+            crate::public::string_literal_content(&literal)
+                .unwrap()
+                .as_ref(),
             content
         );
     }
