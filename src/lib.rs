@@ -69,6 +69,39 @@ pub mod public {
     use proc_macro2_diagnostics::SpanDiagnosticExt as _;
 
     pub type MacroResult<T> = Result<T, Diagnostic>;
+    pub type MacroDeepResult<T> = Result<T, DeepDiagnostic>;
+
+    #[derive(Clone, Debug)]
+    pub struct DeepDiagnostic {
+        level: proc_macro2_diagnostics::Level,
+        message: String,
+    }
+    impl DeepDiagnostic {
+        // @TODO macro_rules and also generate: pub fn warning, note, help
+        pub fn error<T: Into<String>>(message: T) -> Self {
+            Self {
+                level: proc_macro2_diagnostics::Level::Error,
+                message: message.into(),
+            }
+        }
+        // @TODO if implemented in proc_macro2_diagnostics, make it accept MultiSpan:
+        //
+        // pub fn spanned<S: MultiSpan>(self, s: S) -> Diagnostic
+        pub fn spanned(self, span: Span) -> Diagnostic {
+            Diagnostic::spanned(span, self.level, self.message)
+        }
+    }
+
+    // @TODO consider making it a sealed trait
+    pub trait MacroResultDeepExt<T> {
+        // @TODO if implemented in proc_macro2_diagnostics, make it accept MultiSpan.
+        fn spanned(self, span: Span) -> MacroResult<T>;
+    }
+    impl<T> MacroResultDeepExt<T> for MacroDeepResult<T> {
+        fn spanned(self, span: Span) -> MacroResult<T> {
+            self.map_err(|deep_err| deep_err.spanned(span))
+        }
+    }
 
     pub mod sealed {
         /// Intentionally NOT public.
@@ -162,7 +195,7 @@ pub mod public {
 
     pub trait ReadmeLoaded: crate::public::sealed::Trait + Debug {
         // NOT necessary for data flow, but it makes error reporting easier.
-        fn span(&self) -> &Span;
+        //fn span(&self) -> &Span;
         fn markdown_file_content(&self) -> &str;
         fn config(&self) -> &dyn Config;
         /// See [Config::markdown_file_local_path].
@@ -204,8 +237,7 @@ pub mod public {
     /// - not to be `&dyn`-compatible.
     #[derive(Debug)]
     pub struct ReadmeBlocksIter<'a> {
-        span: &'a Span,
-
+        //span: &'a Span,
         markdown_content: &'a str,
         pairs: Peekable<CharIndices<'a>>,
 
@@ -228,9 +260,9 @@ pub mod public {
     }
     impl<'a> ReadmeBlocksIter<'a> {
         /// We start parsing in Markdown/text mode.
-        pub(crate) fn new(span: &'a Span, markdown_content: &'a str) -> Self {
+        pub(crate) fn new(/*span: &'a Span,*/ markdown_content: &'a str) -> Self {
             Self {
-                span,
+                //span,
                 markdown_content,
                 pairs: markdown_content.char_indices().peekable(),
                 item_start: 0,
@@ -259,9 +291,9 @@ pub mod public {
         }};
     }
     impl<'a> Iterator for ReadmeBlocksIter<'a> {
-        type Item = MacroResult<crate::private::ReadmeBlock<'a>>;
+        type Item = MacroDeepResult<crate::private::ReadmeBlock<'a>>;
 
-        fn next(&mut self) -> Option<MacroResult<crate::private::ReadmeBlock<'a>>> {
+        fn next(&mut self) -> Option<MacroDeepResult<crate::private::ReadmeBlock<'a>>> {
             'main: loop {
                 if self.code_triple_backtick_suffix_end == Some(None) {
                     // Find end of the triple backtick suffix (if any).
@@ -335,7 +367,7 @@ pub mod public {
                 }
             }
             if self.item_is_code() {
-                return Some(Err(self.span.error(format!(
+                return Some(Err(DeepDiagnostic::error(format!(
                     "The last code block is not enclosed with three backticks. It started at \
                     UTF-8 byte index (indexed from zero) {}. The rest of the input was: {}",
                     self.item_start,
@@ -358,7 +390,9 @@ pub mod public {
     #[cfg(test)]
     mod readme_blocks_iter_test {
         use crate::private::ReadmeBlock;
-        use crate::public::{MacroResult, ReadmeBlock as _, ReadmeBlocksIter};
+        use crate::public::{
+            MacroDeepResult, MacroResult, MacroResultDeepExt, ReadmeBlock as _, ReadmeBlocksIter,
+        };
         use core::str::FromStr;
         use proc_macro2::Literal;
 
@@ -366,12 +400,12 @@ pub mod public {
         fn simplest_one() -> MacroResult<()> {
             let span = Literal::from_str("0").unwrap().span();
             let iter = ReadmeBlocksIter::new(
-                &span,
+                //&span,
                 "01 text\n\
                 02 text",
             );
 
-            let v = iter.collect::<MacroResult<Vec<_>>>()?;
+            let v = iter.collect::<MacroDeepResult<Vec<_>>>().spanned(span)?;
             assert_eq!(v.len(), 1);
 
             assert!(matches!(v[0], ReadmeBlock::Text(_)));
@@ -380,17 +414,17 @@ pub mod public {
         }
 
         #[test]
-        fn simplest_two() -> MacroResult<()> {
+        fn simplest_two() -> MacroDeepResult<()> {
             let span = Literal::from_str("0").unwrap().span();
             let iter = ReadmeBlocksIter::new(
-                &span,
+                // /&span,
                 "01 text\n\
                 ```\n\
                 const _: &str = \"03_code\";\n\
                 ```",
             );
 
-            let v = iter.collect::<MacroResult<Vec<_>>>()?;
+            let v = iter.collect::<MacroDeepResult<Vec<_>>>()?;
             assert_eq!(v.len(), 2);
 
             assert!(matches!(v[0], ReadmeBlock::Text(_)));
@@ -405,7 +439,7 @@ pub mod public {
         fn simplest_three() -> MacroResult<()> {
             let span = Literal::from_str("0").unwrap().span();
             let iter = ReadmeBlocksIter::new(
-                &span,
+                //&span,
                 "01 text\n\
                 ```\n\
                 const _: () = {};\n\
@@ -413,7 +447,7 @@ pub mod public {
                 text again",
             );
 
-            let v = iter.collect::<MacroResult<Vec<_>>>()?;
+            let v = iter.collect::<MacroDeepResult<Vec<_>>>().spanned(span)?;
             assert_eq!(v.len(), 3);
 
             assert!(matches!(v[0], ReadmeBlock::Text(_)));
@@ -431,14 +465,14 @@ pub mod public {
         fn simplest_empty_preamble_text() -> MacroResult<()> {
             let span = Literal::from_str("0").unwrap().span();
             let iter = ReadmeBlocksIter::new(
-                &span,
+                //&span,
                 "```\n\
                  const _: &str = \"02_code\";\n\
                  ```\n\
                  text",
             );
 
-            let v = iter.collect::<MacroResult<Vec<_>>>()?;
+            let v = iter.collect::<MacroDeepResult<Vec<_>>>().spanned(span)?;
             assert_eq!(v.len(), 3);
 
             assert!(matches!(v[1], ReadmeBlock::Code(_)));
@@ -450,13 +484,13 @@ pub mod public {
         fn simplest_code_block_is_last() -> MacroResult<()> {
             let span = Literal::from_str("0").unwrap().span();
             let iter = ReadmeBlocksIter::new(
-                &span,
+                //&span,
                 "```\n\
                  const _: &str = \"02_code\";\n\
                  ```",
             );
 
-            let v = iter.collect::<MacroResult<Vec<_>>>()?;
+            let v = iter.collect::<MacroDeepResult<Vec<_>>>().spanned(span)?;
             assert_eq!(v.len(), 2);
 
             assert!(matches!(v[1], ReadmeBlock::Code(_)));
@@ -467,7 +501,7 @@ pub mod public {
 
     pub trait ReadmeExtracted<'a>: crate::public::sealed::Trait + Debug {
         // NOT necessary for data flow, but it makes error reporting easier.
-        fn span(&self) -> &Span;
+        //fn span(&self) -> &Span;
 
         /// See [Config::markdown_file_local_path].
         fn markdown_file_local_path(&self) -> &str;
@@ -549,7 +583,7 @@ pub mod public {
     pub fn string_literal_content(enclosed_owned: &Literal) -> MacroResult<OwnedStringSlice> {
         let span = enclosed_owned.span();
         let enclosed_owned = enclosed_owned.to_string();
-        let (start_incl, end_excl) = string_literal_start_end(&span, &enclosed_owned)?;
+        let (start_incl, end_excl) = string_literal_start_end(&enclosed_owned).spanned(span)?;
         Ok(OwnedStringSlice::new_from_string(
             enclosed_owned,
             start_incl,
@@ -558,7 +592,7 @@ pub mod public {
     }
 
     /// Use inside [string_literal_start_end] and similar.
-    macro_rules! some_or_err{
+    macro_rules! some_or_fail{
         ( $span:expr, $option_expr:expr, $( $rest:tt)+ ) => {
             match $option_expr {
                 Some(value) => value,
@@ -574,11 +608,41 @@ pub mod public {
     }
 
     /// Use inside [string_literal_start_end] and similar.
+    macro_rules! some_or_fail_deep{
+        ( $option_expr:expr, $( $rest:tt)+ ) => {
+            match $option_expr {
+                Some(value) => value,
+                None => {
+                    return Err(crate::public::DeepDiagnostic::error(
+                        format!(
+                            $( $rest )+
+                        )
+                    ));
+                }
+            }
+        };
+    }
+
+    /// Use inside [string_literal_start_end] and similar.
     #[macro_export]
-    macro_rules! true_or_err{
+    macro_rules! true_or_fail{
         ( $span:expr, $bool_expr:expr, $( $rest:tt)+ ) => {
             if !$bool_expr {
                 return Err($span.clone().error(
+                        format!(
+                            $( $rest )+
+                        )
+                    ));
+            }
+        };
+    }
+
+    /// Use inside [string_literal_start_end] and similar.
+    #[macro_export]
+    macro_rules! true_or_fail_deep{
+        ( $bool_expr:expr, $( $rest:tt)+ ) => {
+            if !$bool_expr {
+                return Err(crate::public::DeepDiagnostic::error(
                         format!(
                             $( $rest )+
                         )
@@ -592,7 +656,7 @@ pub mod public {
     /// Pass a formatting string as the first part of the "rest" parameter. The last placeholder
     /// `{}` in the formatting string will be populated with the original error.
     #[macro_export]
-    macro_rules! ok_or_err{
+    macro_rules! ok_or_fail{
         ( $span:expr, $result_expr:expr, $( $rest:tt)+ ) => {
             match $result_expr {
                 Ok(value) => value,
@@ -607,17 +671,35 @@ pub mod public {
         };
     }
 
-    pub fn string_literal_start_end(span: &Span, enclosed: &str) -> MacroResult<(usize, usize)> {
-        true_or_err!(
-            span,
+    /// Use inside [string_literal_start_end] and similar.
+    ///
+    /// Pass a formatting string as the first part of the "rest" parameter. The last placeholder
+    /// `{}` in the formatting string will be populated with the original error.
+    #[macro_export]
+    macro_rules! ok_or_fail_deep {
+        ( $result_expr:expr, $( $rest:tt)+ ) => {
+            match $result_expr {
+                Ok(value) => value,
+                Err(err) => {
+                    return Err(crate::public::DeepDiagnostic::error(
+                        format!(
+                            $( $rest )+ , err
+                        )
+                    ));
+                }
+            }
+        };
+    }
+
+    pub fn string_literal_start_end(enclosed: &str) -> MacroDeepResult<(usize, usize)> {
+        true_or_fail_deep!(
             enclosed.len() > 2,
             "Expecting an enclosed string literal (at least two bytes), but received: {}",
             enclosed
         );
 
         let mut chars = enclosed.chars();
-        let first = some_or_err! {
-            span,
+        let first = some_or_fail_deep! {
             chars.next(),
             "Can't parse the first character of: {enclosed}"
 
@@ -626,14 +708,12 @@ pub mod public {
         if first == '"' || first == 'r' {
             if first == '"' {
                 // ordinary "string literals"
-                let last = some_or_err!(
-                    span,
+                let last = some_or_fail_deep!(
                     chars.next_back(),
                     "Can't parse the last character of: {enclosed}"
                 );
 
-                true_or_err!(
-                    span,
+                true_or_fail_deep!(
                     last == '"',
                     "Expecting the last character to be a closing quote '\"', but it's: '{last}'."
                 );
@@ -648,38 +728,34 @@ pub mod public {
                     } else if c == '"' {
                         break;
                     } else {
-                        return Err(span.clone().error(
+                        return Err(DeepDiagnostic::error(
                             "Expecting a raw string literal, but surprised by '{c}'. \
                                 Whole literal: {enclosed}",
                         ));
                     }
                 }
                 for _ in 0..num_of_hashes {
-                    let c = some_or_err!(
-                        span,
+                    let c = some_or_fail_deep!(
                         chars.next_back(),
                         "Expecting a raw string literal, but it seems not closed. \
                                 Expecting a hash character '#' near the end, but out of \
                                 characters. Whole literal: {enclosed}"
                     );
-                    true_or_err!(
-                        span,
+                    true_or_fail_deep!(
                         c == '#',
                         "Expecting a raw string literal, but it seems not \
                             closed. Surprised by character '{c}' near the end. \
                             Whole literal: {enclosed}"
                     );
                 }
-                let c = some_or_err!(
-                    span,
+                let c = some_or_fail_deep!(
                     chars.next_back(),
                     "Expecting a raw string literal, but it \
                             seems not closed. \
                             Expecting a quote character '\"' near the end, but out of \
                             characters. Whole literal: {enclosed}"
                 );
-                true_or_err!(
-                    span,
+                true_or_fail_deep!(
                     c == '"',
                     "Internal or unexpected error: Expecting a raw string literal, but it \
                             seems not closed. \
@@ -690,8 +766,9 @@ pub mod public {
                 Ok((2 + num_of_hashes, enclosed.len() - 1 - num_of_hashes))
             }
         } else {
-            Err(span.clone().error("Internal Error: Expecting a string literal, which would be either \"...\", or r\"...\", \
-                    r#\"...\"#, r##\"...\"## (and so on). But received: {enclosed}"
+            Err(DeepDiagnostic::error(
+                "Internal Error: Expecting a string literal, which would be either \"...\", or r\"...\", \
+                    r#\"...\"#, r##\"...\"## (and so on). But received: {enclosed}",
             ))
         }
     }
@@ -736,11 +813,11 @@ pub mod public {
         let config =
             toml::from_str::<crate::private::Config>(config_content_and_span.config_content());
 
-        let config = ok_or_err!(
+        let config = ok_or_fail!(
             config_content_and_span.span(),
             config,
             "Couldn't parse given literal's content as an expected TOML config. Content: \
-                    {}\n{:?}",
+                    {}\nError:\n{:?}",
             config_content_and_span.config_content()
         );
 
@@ -751,7 +828,7 @@ pub mod public {
             if tags.len() > 0 {
                 let mut set = HashSet::<&str>::with_capacity(tags.len());
                 set.extend(tags.iter());
-                true_or_err!(
+                true_or_fail!(
                     config_content_and_span.span(),
                     set.len() == tags.len(),
                     "Since tags were given, they must be unique! However, there are {} tags, but only {} unique subsets of them.",
@@ -780,7 +857,7 @@ pub mod public {
         let file_relative_path = file_relative_path.as_ref();
 
         let file_full_path = {
-            let invoker_file_path = some_or_err! {
+            let invoker_file_path = some_or_fail! {
                 span,
                 span.local_file(),
                     "Rust source file that invoked readme_code_extractor_lib::load_file(...) \
@@ -788,7 +865,7 @@ pub mod public {
                     nth_by_file) for file with relative path {file_relative_path} \
                     should have a known location."
             };
-            let invoker_parent_dir = some_or_err!(
+            let invoker_parent_dir = some_or_fail!(
                 span,
                 invoker_file_path.parent(),
                 "Rust source file that invoked readme_code_extractor_lib::load_file(...) \
@@ -801,7 +878,7 @@ pub mod public {
 
         // Error handling is modelling https://doc.rust-lang.org/nightly/src/core/result.rs.html
         // > `fn unwrap_failed`, which invokes `panic!("{msg}: {error:?}");`
-        let content = ok_or_err!(
+        let content = ok_or_fail!(
             span,
             std::fs::read_to_string(&file_full_path),
             "Expecting a file {}, but opening it failed: {:?}",
@@ -818,7 +895,7 @@ pub mod public {
         let span = config_and_span.span();
         let markdown_file_content = load_file(span, markdown_file_local_path)?;
         Ok(crate::private::ReadmeLoaded {
-            span,
+            //span,
             markdown_file_local_path,
             markdown_file_content,
             config: config_and_span.config(),
@@ -828,10 +905,11 @@ pub mod public {
     #[doc(hidden)]
     pub fn readme_extract<'a>(
         load: &'a impl crate::public::ReadmeLoaded,
-    ) -> MacroResult<impl crate::public::ReadmeExtracted<'a>> {
-        let mut all_blocks =
-            crate::public::ReadmeBlocksIter::new(load.span(), load.markdown_file_content())
-                .peekable();
+    ) -> MacroDeepResult<impl crate::public::ReadmeExtracted<'a>> {
+        let mut all_blocks = crate::public::ReadmeBlocksIter::new(
+            /*load.span(),*/ load.markdown_file_content(),
+        )
+        .peekable();
 
         let (preamble_text, preamble_code) = if load.config().preamble().is_none() {
             (None, None)
@@ -859,7 +937,7 @@ pub mod public {
 
         //let source_file_full_path = load.source_file_full_path();
         Ok(crate::private::ReadmeExtracted {
-            span: load.span(),
+            //span: load.span(),
             markdown_file_local_path: load.markdown_file_local_path(),
             preamble_text,
             preamble_code,
@@ -1004,7 +1082,7 @@ pub(crate) mod private {
 
     #[derive(Debug)]
     pub struct ReadmeLoaded<'a> {
-        pub span: &'a Span,
+        //pub span: &'a Span,
         pub markdown_file_content: String,
         pub markdown_file_local_path: &'a str,
         pub config: &'a dyn crate::public::Config,
@@ -1024,8 +1102,7 @@ pub(crate) mod private {
 
     #[derive(Debug)]
     pub struct ReadmeExtracted<'a> {
-        pub span: &'a Span,
-
+        //pub span: &'a Span,
         pub markdown_file_local_path: &'a str,
 
         /// [None] if [crate::public::config::Preamble::is_no_preamble]. But, it may be [None] even
@@ -1204,9 +1281,9 @@ mod trait_impls {
         fn _seal(&self, _: &TraitParam) {}
     }
     impl<'a> crate::public::ReadmeLoaded for crate::private::ReadmeLoaded<'a> {
-        fn span(&self) -> &Span {
+        /*fn span(&self) -> &Span {
             self.span
-        }
+        }*/
         fn markdown_file_local_path(&self) -> &str {
             self.markdown_file_local_path
         }
@@ -1262,9 +1339,9 @@ mod trait_impls {
         fn _seal(&self, _: &TraitParam) {}
     }
     impl<'a> crate::public::ReadmeExtracted<'a> for crate::private::ReadmeExtracted<'a> {
-        fn span(&self) -> &Span {
+        /*fn span(&self) -> &Span {
             self.span
-        }
+        }*/
         fn markdown_file_local_path(&self) -> &str {
             self.markdown_file_local_path
         }
