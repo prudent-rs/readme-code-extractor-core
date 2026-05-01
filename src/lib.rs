@@ -845,37 +845,6 @@ pub mod public {
         ))
     }
 
-    /// Use inside [string_literal_start_end] and similar.
-    #[macro_export]
-    macro_rules! true_or_fail{
-        ( $span:expr, $bool_expr:expr, $( $rest:tt)+ ) => {
-            ({
-            use ::proc_macro2_diagnostics::SpanDiagnosticExt as _;
-            if !$bool_expr {
-                return ::core::result::Result::Err($span.error(
-                        format!(
-                            $( $rest )+
-                        )
-                    ));
-            }
-            })
-        };
-    }
-
-    /// Use inside [string_literal_start_end] and similar.
-    #[macro_export]
-    macro_rules! true_or_fail_deep{
-        ( $bool_expr:expr, $( $rest:tt)+ ) => {
-            if !$bool_expr {
-                return ::core::result::Result::Err($crate::public::DeepDiagnostic::error(
-                        format!(
-                            $( $rest )+
-                        )
-                    ));
-            }
-        };
-    }
-
     pub fn string_literal_start_end(enclosed: &str) -> MacroDeepResult<(usize, usize)> {
         assert::true_or_error(enclosed.len() > 2, || {
             format!(
