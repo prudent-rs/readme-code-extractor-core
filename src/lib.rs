@@ -464,7 +464,24 @@ pub mod public {
     assert_dyn_compatible!(ReadmeLoaded);
 
     pub trait CodeBlock: crate::public::sealed::Trait + Debug {
+        // - @TODO support escaping with tripe tilde ~~~, too
+        // - @TODO support indentation prefix before leading ``` or ~~~
+        // - @TODO support indentation of max. 3 spaces before the trailing ``` or ~~~ - see
+        //   https://github.github.com/gfm/#info-string > "The closing code fence may be indented up
+        //   to three spaces"
+        // - @TODO support more than 3 characters of the leading ` or ~ (and same number of the
+        //   closing ` or ~`)
+        // - UNLIKE https://github.github.com/gfm/#info-string, we DO require the last code block
+        //   (if any) to be enclosed. If it were open, GitHub would render it well, BUT including
+        //   such Markdown file in a Rust source (such as with `#![doc =
+        //   include_str!("../README.md")]`) would leave the Rust lexer in a bad state!
         fn triple_backtick_suffix(&self) -> &str;
+
+        fn triple_backtick_suffix_parts(&self) -> &Vec<&str>;
+
+        /// The part right of "tag:" out of [Self::triple_backtick_suffix_parts] (if any).
+        fn tag(&self) -> Option<&str>;
+
         fn code(&self) -> &str;
     }
     assert_dyn_compatible!(CodeBlock);
@@ -596,10 +613,21 @@ pub mod public {
                                 );
                             });
 
-                        crate::private::ReadmeBlock::Code(crate::private::CodeBlock {
-                            triple_backtick_suffix: &self.markdown_content
-                                [self.item_start..code_triple_backtick_suffix_end],
+                        let triple_backtick_suffix = &self.markdown_content
+                            [self.item_start..code_triple_backtick_suffix_end]
+                            .trim();
+                        let triple_backtick_suffix_parts =
+                            triple_backtick_suffix.split(',').collect::<Vec<_>>();
 
+                        let tag = triple_backtick_suffix_parts.iter().find_map(|part| {
+                            let s = part.split_once("tag:");
+                            s.map(|(_, tag_value)| tag_value)
+                        });
+
+                        crate::private::ReadmeBlock::Code(crate::private::CodeBlock {
+                            triple_backtick_suffix,
+                            triple_backtick_suffix_parts,
+                            tag,
                             code: &self.markdown_content
                                 [code_triple_backtick_suffix_end..next_block_start - 3],
                         })
@@ -1208,6 +1236,8 @@ pub(crate) mod private {
     #[derive(Debug)]
     pub struct CodeBlock<'a> {
         pub triple_backtick_suffix: &'a str,
+        pub triple_backtick_suffix_parts: Vec<&'a str>,
+        pub tag: Option<&'a str>,
         pub code: &'a str,
     }
 
@@ -1385,6 +1415,12 @@ mod trait_impls {
     impl<'a> crate::public::CodeBlock for crate::private::CodeBlock<'a> {
         fn triple_backtick_suffix(&self) -> &str {
             self.triple_backtick_suffix
+        }
+        fn triple_backtick_suffix_parts(&self) -> &Vec<&str> {
+            &self.triple_backtick_suffix_parts
+        }
+        fn tag(&self) -> Option<&str> {
+            self.tag
         }
         fn code(&self) -> &str {
             self.code
