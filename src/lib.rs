@@ -863,49 +863,6 @@ pub mod public {
         };
     }
 
-    /// Use inside [string_literal_start_end] and similar.
-    ///
-    /// Pass a formatting string as the first part of the "rest" parameter. The last placeholder
-    /// `{}` in the formatting string will be populated with the original error.
-    #[macro_export]
-    macro_rules! ok_or_fail{
-        ( $span:expr, $result_expr:expr, $( $rest:tt)+ ) => {
-            ({
-            use ::proc_macro2_diagnostics::SpanDiagnosticExt as _;
-            match $result_expr {
-                ::core::result::Result::Ok(value) => value,
-                ::core::result::Result::Err(err) => {
-                    return ::core::result::Result::Err($span.error(
-                        format!(
-                            $( $rest )+ , err
-                        )
-                    ));
-                }
-            }
-            })
-        };
-    }
-
-    /// Use inside [string_literal_start_end] and similar.
-    ///
-    /// Pass a formatting string as the first part of the "rest" parameter. The last placeholder
-    /// `{}` in the formatting string will be populated with the original error.
-    #[macro_export]
-    macro_rules! ok_or_fail_deep {
-        ( $result_expr:expr, $( $rest:tt)+ ) => {
-            match $result_expr {
-                ::core::result::Result::Ok(value) => value,
-                ::core::result::Result::Err(err) => {
-                    return ::core::result::Result::Err($crate::public::DeepDiagnostic::error(
-                        format!(
-                            $( $rest )+ , err
-                        )
-                    ));
-                }
-            }
-        };
-    }
-
     pub fn string_literal_start_end(enclosed: &str) -> MacroDeepResult<(usize, usize)> {
         true_or_fail_deep!(
             enclosed.len() > 2,
