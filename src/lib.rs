@@ -486,11 +486,10 @@ pub mod public {
     pub trait CodeBlock: crate::public::sealed::Trait + Debug {
         // - @TODO support escaping with tripe tilde ~~~, too
         // - @TODO support indentation prefix before leading ``` or ~~~
+        // - @TODO support more than 3 characters of the leading ` or ~.
         // - @TODO support indentation of max. 3 spaces before the trailing ``` or ~~~ - see
         //   https://github.github.com/gfm/#info-string > "The closing code fence may be indented up
         //   to three spaces"
-        // - @TODO support more than 3 characters of the leading ` or ~ (and same number of the
-        //   closing ` or ~`)
         // - UNLIKE https://github.github.com/gfm/#info-string, we DO require the last code block
         //   (if any) to be enclosed. If it were open, GitHub would render it well, BUT including
         //   such Markdown file in a Rust source (such as with `#![doc =
@@ -673,6 +672,8 @@ pub mod public {
                 }
             }
             if self.item_is_code() {
+                // We do NOT support an unclosed last code block, even though GitHub Markdown does.
+                // See CodeBlock.
                 return Some(Err(DeepDiagnostic::error(format!(
                     "The last code block is not enclosed with three backticks. It started at \
                     UTF-8 byte index (indexed from zero) {}. The rest of the input was: {}",
@@ -801,21 +802,20 @@ pub mod public {
         }
 
         #[test]
-        fn simple_last_code_block_unclosed() -> MacroResult<()> {
-            let v = {
+        fn simple_last_code_block_unclosed() {
+            let r = {
                 let iter = ReadmeBlocksIter::new(
                     "```\n\
                     const _: &str = \"02_code\";\n\
-                    ```",
+                    ",
                 );
                 let span = Literal::from_str("0").unwrap().span();
-                iter.collect::<MacroDeepResult<Vec<_>>>().spanned(span)?
+                iter.collect::<MacroDeepResult<Vec<_>>>().spanned(span)
             };
-            assert_eq!(v.len(), 2);
-
-            assert!(matches!(v[1], ReadmeBlock::Code(_)));
-            assert_eq!(v[1].code().unwrap().code().len(), 28);
-            Ok(())
+            assert!(matches!(r, Err(_)));
+            assert!(
+                format!("{r:?}").contains("last code block is not enclosed with three backticks")
+            );
         }
     }
 
