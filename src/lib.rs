@@ -19,6 +19,7 @@ extern crate alloc;
     q = { y = 1. b = 2}
     serde = { version = "1.0.113", features = ["derive"] }
 "#]
+#[allow(clippy::empty_line_after_outer_attr)]
 #[doc = /*toml*/ r#"
 a = "b"
 [xx]
@@ -457,6 +458,7 @@ pub mod public {
         /// - Setting this to `true` does NOT indicate whether code blocks are filtered by tag value
         ///   or not.
         /// - Code blocks CAN be filtered by tag value even if [Self::pass_through_tag] is `false`.
+        ///
         /// Filtering is determined by the actual proc macro invoked (out of
         /// `readme-code-extractor-proc`).
         fn pass_through_tags(&self) -> bool;
@@ -565,7 +567,7 @@ pub mod public {
         }
         /// Whether the current item is a code block (rather than a text block).
         pub(crate) fn item_is_code(&self) -> bool {
-            matches!(self.code_triple_backtick_suffix_end, Some(_))
+            self.code_triple_backtick_suffix_end.is_some()
         }
     }
     pub type ReadmeBlocksIterPeekable<'a> = Peekable<ReadmeBlocksIter<'a>>;
@@ -674,14 +676,14 @@ pub mod public {
             if self.item_is_code() {
                 // We do NOT support an unclosed last code block, even though GitHub Markdown does.
                 // See CodeBlock.
-                return Some(Err(DeepDiagnostic::error(format!(
+                Some(Err(DeepDiagnostic::error(format!(
                     "The last code block is not enclosed with three backticks. It started at \
                     UTF-8 byte index (indexed from zero) {}. The rest of the input was: {}",
                     self.item_start,
                     &self.markdown_content[self.item_start..]
-                ))));
+                ))))
             } else {
-                return if self.item_start < self.markdown_content.len() {
+                if self.item_start < self.markdown_content.len() {
                     let result = crate::private::ReadmeBlock::Text(
                         &self.markdown_content[self.item_start..],
                     );
@@ -690,7 +692,7 @@ pub mod public {
                     Some(Ok(result))
                 } else {
                     None
-                };
+                }
             }
         }
     }
@@ -952,6 +954,7 @@ pub mod public {
             } else {
                 // raw string literals
                 let mut num_of_hashes = 0usize;
+                #[allow(clippy::while_let_on_iterator)]
                 while let Some(c) = chars.next() {
                     if c == '#' {
                         num_of_hashes += 1;
@@ -1221,7 +1224,7 @@ pub(crate) mod private {
             Prefixed(&'a str),
         }
 
-        #[derive(Serialize, Deserialize, Debug)]
+        #[derive(Serialize, Deserialize, Debug, Default)]
         #[serde(default)]
         pub struct CodeHeaders<'a> {
             pub top_prefix: &'a str,
@@ -1351,15 +1354,6 @@ mod trait_impls {
     impl<'a> Trait for crate::private::config::CodeHeaders<'a> {
         #[allow(private_interfaces)]
         fn _seal(&self, _: &TraitParam) {}
-    }
-    impl<'a> Default for crate::private::config::CodeHeaders<'a> {
-        fn default() -> Self {
-            Self {
-                top_prefix: "",
-                tag_suffix: "",
-                end_suffix: "",
-            }
-        }
     }
 
     impl<'a> crate::public::config::CodeHeaders for crate::private::config::CodeHeaders<'a> {
