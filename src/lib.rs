@@ -680,6 +680,8 @@ pub mod public {
         use crate::public::{
             MacroDeepResult, MacroDeepResultExt, MacroResult, ReadmeBlock as _, ReadmeBlocksIter,
         };
+        use alloc::format;
+        use alloc::vec::Vec;
         use core::str::FromStr;
         use proc_macro2::Literal;
 
