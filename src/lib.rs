@@ -3,12 +3,14 @@
 // Avoid std:: and use core:: or alloc::  as much as we can.
 extern crate alloc;
 
-// On VS Code
-// - install https://github.com/ruschaaf/extended-embedded-languages
+// In VS Code
+// - install https://github.com/ruschaaf/extended-embedded-languages =
+//   https://marketplace.visualstudio.com/items?itemName=walteh.embedded-languages-vscode
 // - and prefix the raw string with `/*toml*/ ` - see
 //   https://github.com/ruschaaf/extended-embedded-languages#embedded-languages
-#[doc = r"123\n\n1"]
-#[doc = r"123\n\n1( { []} )"]
+// - have have both the comment /*toml*/ and the following string opening quote r" ON THE SAME LINE.
+//   Otherwise we don't get embedded highlighting with "Embedded Languages" for VS Code.
+#[allow(clippy::empty_line_after_outer_attr)]
 #[doc = /*toml*/ r#"
     a = "b"
     [xx]
@@ -19,35 +21,7 @@ extern crate alloc;
     q = { y = 1. b = 2}
     serde = { version = "1.0.113", features = ["derive"] }
 "#]
-#[allow(clippy::empty_line_after_outer_attr)]
-#[doc = /*toml*/ r#"
-a = "b"
-[xx]
-y = 1
-[dd.xx]
-h = 1.0
-q = { y = 1. b = 2}
-"#]
-
-// The following HAS TO have both the comment /*toml*/ and the following string opening quote r"
-// ON THE SAME LINE.
-//
-// Otherwise we don't get embedded highlighting with "Embedded Languages" for VS Code
-// https://marketplace.visualstudio.com/items?itemName=walteh.embedded-languages-vscode
-const _: &str = /*toml*/
-    r#"
-a = "b"
-[xx]
-y = 1
-[dd.xx]
-h = 1.0
-q = { y = 1. b = 2}
-"#;
-
-const _S1: &str = /*json*/
-    r#"
-    {"a": "b", "c": [1, 2, 3], "d": 0.333}
-"#;
+const _: &str = "...";
 
 /// Assert that a given trait is dyn-compatible.
 macro_rules! assert_dyn_compatible {
