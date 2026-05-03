@@ -1,29 +1,9 @@
-# mce-lib
+# mce-lib Markdown Code Extractor library (part of mce)
 
-Mostly internal: Most of `mce-lib` is to be used by `mce` and
-`mce-proc` only, not directly.
+Mostly internal: Most of `mce-lib` is to be used by `mce` and `mce-proc` only, not directly.
 
-The only initial reason for this crate to exist as separate from mce was to have
-examples and up-to-date published documentation (on docs.rs).
-
-## Stability
-
-This crate doesn't necessarily follow semver. All public types and traits are sealed. Outside this
-crate its:
-
-- Traits are sealed.
-- Types are "sealed":
-  - can't be used/referred to - other than with a generic parameter which implements a sealed trait
-  - can't be instantiated (other than with `Default::default()`)
-  - instances can't be cloned.
-- Values
-  - are returned only as immutable and with an opaque type: `Box<dyn
-    mce_lib::traits::Config>`.
-  - value parts are returned by immutable (shared) references, and with a non-Boxed opaque type,
-    like `&dyn mce_lib::traits::config::Headers`.
-
-We may have new fields added, and as far as `Default` value(s) are valid/good, there's no need for a
-new major version.
+The only initial reason for this crate to exist as separate from mce was to have examples and
+up-to-date published documentation (on docs.rs).
 
 ## TOML only
 
