@@ -31,6 +31,8 @@ macro_rules! assert_dyn_compatible {
     };
 }
 
+enum SealedTraitFunParam {}
+
 /// Internal/Only for prudent-rs/mce. SemVer-exempt!
 pub mod public {
     use alloc::string::{String, ToString};
@@ -43,21 +45,14 @@ pub mod public {
     use proc_macro2_diagnostics_more::ext_all::*;
     use proc_macro2_diagnostics_more::{DeepDiagnostic, MacroDeepResult, MacroResult};
 
-    pub mod sealed {
-        /// Intentionally NOT public.
-        pub(crate) struct TraitParam;
-        pub trait Trait {
-            #[allow(private_interfaces)]
-            fn _seal(&self, _: &TraitParam);
-        }
-        assert_dyn_compatible!(Trait);
-    }
-
     /// Marker-only, no-ops.
     pub mod marker {
         /// Indicate that any `is_***` methods are mutually exclusive (exactly one returns `true`)
         /// and that they indicate `enum`-like.
-        pub trait EnumLike: crate::public::sealed::Trait {}
+        pub trait EnumLike {
+            #[allow(private_interfaces)]
+            fn _seal(&self, _: &crate::SealedTraitFunParam);
+        }
     }
 
     pub mod config {
@@ -77,7 +72,7 @@ pub mod public {
         }
         assert_dyn_compatible!(Preamble);
 
-        pub trait CodeHeaders: crate::public::sealed::Trait {
+        pub trait CodeHeaders {
             /// Prefix to be injected at the beginning of any non-preamble code block, even before a
             /// mce_tag (if any). Injected REGARDLESS of whether there is a mce_tag or no mce_tag
             /// (that is, the mce_tag is empty).
@@ -90,11 +85,13 @@ pub mod public {
             fn mce_tag_suffix(&self) -> &str;
             /// Suffix to be appended after any non-preamble code block.
             fn end_suffix(&self) -> &str;
+            #[allow(private_interfaces)]
+            fn _seal(&self, _: &crate::SealedTraitFunParam);
         }
         assert_dyn_compatible!(CodeHeaders);
     }
 
-    pub trait Config: crate::public::sealed::Trait + Debug {
+    pub trait Config: Debug {
         /// Markdown file path, relative to where the relevant mce's macro is being used.
         fn markdown_file_path(&self) -> &str;
 
@@ -117,30 +114,38 @@ pub mod public {
         ///
         /// Filtering is determined by the actual proc macro invoked (out of `mce-proc`).
         fn pass_through_tags(&self) -> bool;
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &crate::SealedTraitFunParam);
     }
     assert_dyn_compatible!(Config);
     // ----
 
-    pub trait ConfigContentAndSpan: crate::public::sealed::Trait + Debug {
+    pub trait ConfigContentAndSpan: Debug {
         fn config_content(&self) -> &str;
         fn span(&self) -> Span;
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &crate::SealedTraitFunParam);
     }
     assert_dyn_compatible!(ConfigContentAndSpan);
-    pub trait ConfigAndSpan: crate::public::sealed::Trait + Debug {
+    pub trait ConfigAndSpan: Debug {
         fn config(&self) -> &dyn Config;
         fn span(&self) -> Span;
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &crate::SealedTraitFunParam);
     }
     assert_dyn_compatible!(ConfigAndSpan);
 
-    pub trait ReadmeLoaded: crate::public::sealed::Trait + Debug {
+    pub trait ReadmeLoaded: Debug {
         fn markdown_file_content(&self) -> &str;
         fn config(&self) -> &dyn Config;
         /// See [Config::markdown_file_path].
         fn markdown_file_path(&self) -> &str;
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &crate::SealedTraitFunParam);
     }
     assert_dyn_compatible!(ReadmeLoaded);
 
-    pub trait CodeBlock: crate::public::sealed::Trait + Debug {
+    pub trait CodeBlock: Debug {
         // - @TODO support escaping with tripe tilde ~~~, too
         // - @TODO support indentation prefix before leading ``` or ~~~
         // - @TODO support more than 3 characters of the leading ` or ~.
@@ -159,6 +164,9 @@ pub mod public {
         fn mce_tag(&self) -> Option<&str>;
 
         fn code(&self) -> &str;
+
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &crate::SealedTraitFunParam);
     }
     assert_dyn_compatible!(CodeBlock);
 
@@ -490,7 +498,7 @@ pub mod public {
         }
     }
 
-    pub trait ReadmeExtracted<'a>: crate::public::sealed::Trait + Debug {
+    pub trait ReadmeExtracted<'a>: Debug {
         /// See [Config::markdown_file_path].
         fn markdown_file_path(&self) -> &str;
 
@@ -509,6 +517,9 @@ pub mod public {
         fn preamble_code(&self) -> Option<&dyn ReadmeBlock>;
 
         fn non_preamble_blocks(&mut self) -> &mut ReadmeBlocksIterPeekable<'a>;
+
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &crate::SealedTraitFunParam);
     }
     assert_dyn_compatible!(ReadmeExtracted);
     // ------
@@ -976,22 +987,18 @@ pub(crate) mod private {
 }
 
 mod trait_impls {
-    use crate::{
-        public,
-        public::sealed::{Trait, TraitParam},
-    };
+    use crate::{SealedTraitFunParam, public};
     use proc_macro2::Span;
 
-    impl<'a> Trait for crate::private::config::Preamble<'a> {
-        #[allow(private_interfaces)]
-        fn _seal(&self, _: &TraitParam) {}
-    }
     impl<'a> Default for crate::private::config::Preamble<'a> {
         fn default() -> Self {
             Self::None
         }
     }
-    impl<'a> crate::public::marker::EnumLike for crate::private::config::Preamble<'a> {}
+    impl<'a> crate::public::marker::EnumLike for crate::private::config::Preamble<'a> {
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &SealedTraitFunParam) {}
+    }
     impl<'a> crate::public::config::Preamble for crate::private::config::Preamble<'a> {
         fn is_none(&self) -> bool {
             matches!(self, Self::None)
@@ -1011,11 +1018,6 @@ mod trait_impls {
         }
     }
 
-    impl<'a> Trait for crate::private::config::CodeHeaders<'a> {
-        #[allow(private_interfaces)]
-        fn _seal(&self, _: &TraitParam) {}
-    }
-
     impl<'a> crate::public::config::CodeHeaders for crate::private::config::CodeHeaders<'a> {
         fn top_prefix(&self) -> &str {
             self.top_prefix
@@ -1026,12 +1028,10 @@ mod trait_impls {
         fn end_suffix(&self) -> &str {
             self.end_suffix
         }
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &crate::SealedTraitFunParam) {}
     }
 
-    impl<'a> Trait for crate::private::Config<'a> {
-        #[allow(private_interfaces)]
-        fn _seal(&self, _: &TraitParam) {}
-    }
     impl<'a> Default for crate::private::Config<'a> {
         fn default() -> Self {
             Self {
@@ -1068,13 +1068,11 @@ mod trait_impls {
         fn pass_through_tags(&self) -> bool {
             self.pass_through_tags
         }
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &SealedTraitFunParam) {}
     }
     //-----
 
-    impl Trait for crate::private::ConfigContentAndSpan {
-        #[allow(private_interfaces)]
-        fn _seal(&self, _: &TraitParam) {}
-    }
     impl public::ConfigContentAndSpan for crate::private::ConfigContentAndSpan {
         fn config_content(&self) -> &str {
             self.config_content.as_ref()
@@ -1082,12 +1080,10 @@ mod trait_impls {
         fn span(&self) -> Span {
             self.span
         }
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &SealedTraitFunParam) {}
     }
 
-    impl<'a> Trait for crate::private::ConfigAndSpan<'a> {
-        #[allow(private_interfaces)]
-        fn _seal(&self, _: &TraitParam) {}
-    }
     impl<'a> public::ConfigAndSpan for crate::private::ConfigAndSpan<'a> {
         fn config(&self) -> &dyn public::Config {
             &self.config
@@ -1095,13 +1091,10 @@ mod trait_impls {
         fn span(&self) -> Span {
             self.span
         }
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &SealedTraitFunParam) {}
     }
 
-    #[cfg(feature = "std")]
-    impl<'a> Trait for crate::private::ReadmeLoaded<'a> {
-        #[allow(private_interfaces)]
-        fn _seal(&self, _: &TraitParam) {}
-    }
     #[cfg(feature = "std")]
     impl<'a> crate::public::ReadmeLoaded for crate::private::ReadmeLoaded<'a> {
         fn markdown_file_path(&self) -> &str {
@@ -1113,12 +1106,10 @@ mod trait_impls {
         fn config(&self) -> &dyn crate::public::Config {
             self.config
         }
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &SealedTraitFunParam) {}
     }
 
-    impl<'a> Trait for crate::private::CodeBlock<'a> {
-        #[allow(private_interfaces)]
-        fn _seal(&self, _: &TraitParam) {}
-    }
     impl<'a> crate::public::CodeBlock for crate::private::CodeBlock<'a> {
         fn triple_backtick_suffix(&self) -> &str {
             self.triple_backtick_suffix
@@ -1132,13 +1123,14 @@ mod trait_impls {
         fn code(&self) -> &str {
             self.code
         }
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &SealedTraitFunParam) {}
     }
 
-    impl<'a> Trait for crate::private::ReadmeBlock<'a> {
+    impl<'a> crate::public::marker::EnumLike for crate::private::ReadmeBlock<'a> {
         #[allow(private_interfaces)]
-        fn _seal(&self, _: &TraitParam) {}
+        fn _seal(&self, _: &crate::SealedTraitFunParam) {}
     }
-    impl<'a> crate::public::marker::EnumLike for crate::private::ReadmeBlock<'a> {}
     impl<'a> crate::public::ReadmeBlock for crate::private::ReadmeBlock<'a> {
         fn is_text(&self) -> bool {
             matches!(self, Self::Text(_))
@@ -1160,10 +1152,6 @@ mod trait_impls {
         }
     }
 
-    impl<'a> Trait for crate::private::ReadmeExtracted<'a> {
-        #[allow(private_interfaces)]
-        fn _seal(&self, _: &TraitParam) {}
-    }
     impl<'a> crate::public::ReadmeExtracted<'a> for crate::private::ReadmeExtracted<'a> {
         fn markdown_file_path(&self) -> &str {
             self.markdown_file_path
@@ -1184,6 +1172,8 @@ mod trait_impls {
         fn non_preamble_blocks(&mut self) -> &mut crate::public::ReadmeBlocksIterPeekable<'a> {
             &mut self.non_preamble_blocks
         }
+        #[allow(private_interfaces)]
+        fn _seal(&self, _: &SealedTraitFunParam) {}
     }
 }
 
