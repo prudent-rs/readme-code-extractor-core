@@ -720,7 +720,7 @@ pub mod public {
         let config =
             toml::from_str::<crate::private::Config>(config_content_and_span.config_content());
 
-        let config = <Result<crate::private::Config<'_>, toml::de::Error> as proc_macro2_diagnostics_more::ext_all::ResultErrDebugExt<String, crate::private::Config<'_>>>::map_error_dbg_with::<alloc::string::String, _>(config, || {
+        let config = <Result<crate::private::Config, _> as proc_macro2_diagnostics_more::ext_all::ResultErrDebugExt<String, _>>::map_error_dbg_with(config, || {
                 format!(
                     "Can't parse literal's content as an expected TOML config. Content: {}",
                     config_content_and_span.config_content()
@@ -775,15 +775,21 @@ pub mod public {
 
         // Error handling is modelling https://doc.rust-lang.org/nightly/src/core/result.rs.html
         // > `fn unwrap_failed`, which invokes `panic!("{msg}: {error:?}");`
-        let content = <Result<std::string::String, std::io::Error> as proc_macro2_diagnostics_more::ext_all::ResultErrDebugExt<String, alloc::string::String>>::map_error_dbg_with::<std::string::String, _>(std::fs::read_to_string(&file_full_path), || {
+        let content = <Result<_, _> as proc_macro2_diagnostics_more::ext_all::ResultErrDebugExt<
+            String,
+            _,
+        >>::map_error_dbg_with(
+            std::fs::read_to_string(&file_full_path),
+            || {
                 format!(
                     "expecting a file {}, but opening it failed",
                     file_full_path
                         .to_str()
                         .unwrap_or("(PATH UNKNOWN OR NOT UTF-8)")
                 )
-            })
-            .spanned(span)?;
+            },
+        )
+        .spanned(span)?;
         Ok(content)
     }
 
