@@ -720,7 +720,8 @@ pub mod public {
         let config =
             toml::from_str::<crate::private::Config>(config_content_and_span.config_content());
 
-        let config = <Result<crate::private::Config, _> as proc_macro2_diagnostics_more::ext_all::ResultErrDebugExt<String, _>>::map_error_dbg_with(config, || {
+        let config = config
+            .map_error_dbg_with(|| {
                 format!(
                     "Can't parse literal's content as an expected TOML config. Content: {}",
                     config_content_and_span.config_content()
@@ -777,7 +778,6 @@ pub mod public {
         // > `fn unwrap_failed`, which invokes `panic!("{msg}: {error:?}");`
         let content = <Result<_, _> as proc_macro2_diagnostics_more::ext_all::ResultErrDebugExt<
             String,
-            _,
         >>::map_error_dbg_with(
             std::fs::read_to_string(&file_full_path),
             || {
